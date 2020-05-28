@@ -9,28 +9,37 @@ import (
 	"sync"
 )
 
-// AmqpClient RabbitMq implementation of MessageBus
-type AmqpClient struct {
+// RabbitMqClient RabbitMq implementation of MessageBus
+type RabbitMqClient struct {
 	conn        *amqp.Connection
 	consumerWg  sync.WaitGroup
 	subscribers []subscriber
 	threadNum   int
 }
 
-func NewClient(conn string, threadNum int) *AmqpClient {
-	mc := &AmqpClient{
+func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
+	mc := &RabbitMqClient{
 		threadNum: threadNum,
 	}
 	mc.connectToBroker(conn)
 	return mc
 }
 
-func (m *AmqpClient) Publish(topicName string, body []byte) error {
+func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
+	logger := logrus.WithField("method", "Publish")
 	if m.conn == nil {
 		panic("Tried to send message before connection was initialized. Don't do that.")
 	}
 	ch, err := m.conn.Channel() // Get a channel from the connection
-	defer ch.Close()
+	defer func() {
+		errClose := ch.Close()
+		if errClose != nil {
+			logger.WithError(errClose).Warning("Error when closing channel")
+		}
+	}()
+	if err != nil {
+		return err
+	}
 
 	err = ch.ExchangeDeclare(
 		topicName, // name of the exchange
@@ -57,7 +66,7 @@ func (m *AmqpClient) Publish(topicName string, body []byte) error {
 	return err
 }
 
-func (m *AmqpClient) On(topicName string, consumerName string, handlerFunc service.MessageHandler) error {
+func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc MessageHandler) error {
 	m.subscribers = append(m.subscribers, subscriber{
 		topicName:      topicName,
 		consumerName:   consumerName,
@@ -67,7 +76,7 @@ func (m *AmqpClient) On(topicName string, consumerName string, handlerFunc servi
 	return nil
 }
 
-func (m *AmqpClient) Close() error {
+func (m *RabbitMqClient) Close() error {
 	if m.conn == nil {
 		return fmt.Errorf("trying to close closed connection")
 	}
@@ -78,7 +87,7 @@ func (m *AmqpClient) Close() error {
 	return nil
 }
 
-func (m *AmqpClient) StartConsuming() error {
+func (m *RabbitMqClient) StartConsuming() error {
 	for _, sub := range m.subscribers {
 		for i := 0; i < m.threadNum; i++ {
 			err := m.consume(sub.topicName, sub.consumerName, sub.messageHandler)
@@ -93,7 +102,7 @@ func (m *AmqpClient) StartConsuming() error {
 	return nil
 }
 
-func (m *AmqpClient) consume(topicName string, consumerName string, handlerFunc service.MessageHandler) error {
+func (m *RabbitMqClient) consume(topicName string, consumerName string, handlerFunc MessageHandler) error {
 	ch, err := m.conn.Channel()
 	failOnError(err, "Failed to open a channel")
 
@@ -146,10 +155,10 @@ func (m *AmqpClient) consume(topicName string, consumerName string, handlerFunc 
 type subscriber struct {
 	topicName      string
 	consumerName   string
-	messageHandler service.MessageHandler
+	messageHandler MessageHandler
 }
 
-func (m *AmqpClient) connectToBroker(connectionString string) {
+func (m *RabbitMqClient) connectToBroker(connectionString string) {
 	if connectionString == "" {
 		panic("Cannot initialize connection to broker, connectionString not set. Have you initialized?")
 	}
@@ -161,7 +170,7 @@ func (m *AmqpClient) connectToBroker(connectionString string) {
 	}
 }
 
-func consumeLoop(wg *sync.WaitGroup, channel *amqp.Channel, deliveries <-chan amqp.Delivery, handlerFunc service.MessageHandler, names *QueueNameGenerator) {
+func consumeLoop(wg *sync.WaitGroup, channel *amqp.Channel, deliveries <-chan amqp.Delivery, handlerFunc MessageHandler, names *QueueNameGenerator) {
 	defer wg.Done()
 	for d := range deliveries {
 
@@ -174,7 +183,7 @@ func consumeLoop(wg *sync.WaitGroup, channel *amqp.Channel, deliveries <-chan am
 			continue
 		}
 
-		msgConfirm := NewMessageConfirm(channel, &d, names, d.Body)
+		msgConfirm := NewRabbitMqMessageConfirm(channel, &d, names, d.Body)
 		err := handlerFunc(msgConfirm, d.Body)
 		if err != nil {
 			logrus.WithError(err).Warning("Exception when processing message")

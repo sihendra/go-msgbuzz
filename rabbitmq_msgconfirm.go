@@ -6,26 +6,26 @@ import (
 	"strconv"
 )
 
-type MessageConfirm struct {
+type RabbitMqMessageConfirm struct {
 	channel       *amqp.Channel
 	delivery      *amqp.Delivery
 	nameGenerator *QueueNameGenerator
 	body          []byte
 }
 
-func NewMessageConfirm(channel *amqp.Channel, delivery *amqp.Delivery, nameGenerator *QueueNameGenerator, body []byte) *MessageConfirm {
-	return &MessageConfirm{channel: channel, delivery: delivery, nameGenerator: nameGenerator, body: body}
+func NewRabbitMqMessageConfirm(channel *amqp.Channel, delivery *amqp.Delivery, nameGenerator *QueueNameGenerator, body []byte) *RabbitMqMessageConfirm {
+	return &RabbitMqMessageConfirm{channel: channel, delivery: delivery, nameGenerator: nameGenerator, body: body}
 }
 
-func (m *MessageConfirm) Ack() error {
+func (m *RabbitMqMessageConfirm) Ack() error {
 	return m.channel.Ack(m.delivery.DeliveryTag, false)
 }
 
-func (m *MessageConfirm) Nack() error {
+func (m *RabbitMqMessageConfirm) Nack() error {
 	return m.channel.Nack(m.delivery.DeliveryTag, false, false)
 }
 
-func (m *MessageConfirm) Retry(delay int64, maxRetry int) error {
+func (m *RabbitMqMessageConfirm) Retry(delay int64, maxRetry int) error {
 	// check max retry reached
 	totalInt64, err := getTotalFailed(*m.delivery)
 	if err != nil {
@@ -57,7 +57,7 @@ func (m *MessageConfirm) Retry(delay int64, maxRetry int) error {
 	return m.Ack()
 }
 
-func (m *MessageConfirm) TotalRetried() (int, error) {
+func (m *RabbitMqMessageConfirm) TotalRetried() (int, error) {
 	totalInt64, err := getTotalFailed(*m.delivery)
 
 	return int(totalInt64), err

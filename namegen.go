@@ -1,4 +1,4 @@
-package rabbitmqsvc
+package msgbuzz
 
 import "fmt"
 

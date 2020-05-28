@@ -12,14 +12,3 @@ type MessageConfirm interface {
 	Nack() error
 	Retry(delay int64, maxRetry int) error
 }
-
-type Headers map[string]string
-
-type Message struct {
-	Headers Headers     `json:"headers"`
-	Body    interface{} `json:"body"`
-}
-
-func NewMessage(headers Headers, body interface{}) *Message {
-	return &Message{Headers: headers, Body: body}
-}
