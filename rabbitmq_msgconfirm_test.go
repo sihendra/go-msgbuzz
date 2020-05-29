@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// TODO improve testing
 func TestRabbitMqMessageConfirm_TotalFailed(t *testing.T) {
 	mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
 	topicName := "msgconfirm_total_failed_test"
