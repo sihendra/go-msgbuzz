@@ -106,6 +106,9 @@ func (m *RabbitMqClient) consume(topicName string, consumerName string, handlerF
 	ch, err := m.conn.Channel()
 	failOnError(err, "Failed to open a channel")
 
+	err = ch.Qos(1, 0, false)
+	failOnError(err, "Failed setting qos prefetch to 1")
+
 	logrus.Infof("About to subscribe to topic: %s", topicName)
 
 	names := NewQueueNameGenerator(topicName, consumerName)
