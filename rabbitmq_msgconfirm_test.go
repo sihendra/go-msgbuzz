@@ -12,7 +12,7 @@ import (
 
 // TODO improve testing
 func TestRabbitMqMessageConfirm_TotalFailed(t *testing.T) {
-	mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+	mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1, 0)
 	topicName := "msgconfirm_total_failed_test"
 	consumerName := "msgconfirm_test"
 

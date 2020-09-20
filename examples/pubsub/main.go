@@ -8,7 +8,7 @@ import (
 
 func main() {
 	// Create msgbuzz instance
-	msgBus := msgbuzz.NewRabbitMqClient("amqp://127.0.0.1:5672", 4)
+	msgBus := msgbuzz.NewRabbitMqClient("amqp://127.0.0.1:5672", 4, 0)
 
 	// Register consumer of some topic
 	msgBus.On("profile.created", "reco_engine", func(confirm msgbuzz.MessageConfirm, bytes []byte) error {

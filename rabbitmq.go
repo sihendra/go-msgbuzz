@@ -1,27 +1,43 @@
 package msgbuzz
 
 import (
+	"errors"
 	"fmt"
-	"github.com/sirupsen/logrus"
-	"github.com/streadway/amqp"
 	"reflect"
 	"strconv"
 	"sync"
+	"time"
+
+	"github.com/sirupsen/logrus"
+	"github.com/streadway/amqp"
 )
 
 // RabbitMqClient RabbitMq implementation of MessageBus
 type RabbitMqClient struct {
 	conn        *amqp.Connection
+	url         string
 	consumerWg  sync.WaitGroup
+	rcWg        sync.WaitGroup
+	rcStepTime  int64
+	maxRc       int
 	subscribers []subscriber
 	threadNum   int
 }
 
-func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
+func NewRabbitMqClient(conn string, threadNum int, maxReconnect int) *RabbitMqClient {
 	mc := &RabbitMqClient{
+		url:       conn,
+		maxRc:     maxReconnect,
 		threadNum: threadNum,
 	}
-	mc.connectToBroker(conn)
+
+	// set default rcStepTime
+	mc.rcStepTime = 10
+
+	if err := mc.connectToBroker(); err != nil {
+		panic(err)
+	}
+
 	return mc
 }
 
@@ -99,6 +115,8 @@ func (m *RabbitMqClient) StartConsuming() error {
 
 	m.consumerWg.Wait()
 
+	m.rcWg.Wait()
+
 	return nil
 }
 
@@ -161,16 +179,71 @@ type subscriber struct {
 	messageHandler MessageHandler
 }
 
-func (m *RabbitMqClient) connectToBroker(connectionString string) {
-	if connectionString == "" {
-		panic("Cannot initialize connection to broker, connectionString not set. Have you initialized?")
+func (m *RabbitMqClient) connectToBroker() error {
+	if m.url == "" {
+		return errors.New("cannot initialize connection to broker, connectionString not set. Have you initialized?")
 	}
 
 	var err error
-	m.conn, err = amqp.Dial(fmt.Sprintf("%s/", connectionString))
+	m.conn, err = amqp.Dial(fmt.Sprintf("%s/", m.url))
 	if err != nil {
-		panic("Failed to connect to AMQP compatible broker at: " + connectionString + err.Error())
+		return errors.New("failed to connect to AMQP compatible broker at: " + m.url + err.Error())
 	}
+
+	// spin up listener for connection error
+	if m.maxRc > 0 {
+		m.rcWg.Add(1)
+		go func() {
+			logrus.Info("About to start listening to NotifyClose")
+			notifyCloseErr := <-m.conn.NotifyClose(make(chan *amqp.Error))
+			logrus.WithError(notifyCloseErr).Warning("Receive error from NotifyClose")
+
+			if notifyCloseErr != nil {
+				logrus.Info("Connection is closed by server: Proceed to reconnect")
+				if err := m.reconnect(); err != nil {
+					panic(err)
+				}
+			}
+
+			m.rcWg.Done()
+		}()
+	}
+
+	return nil
+}
+
+func (m *RabbitMqClient) reconnect() error {
+	logger := logrus.WithField("method", "reconnect").WithField("url", m.url)
+
+	for i := 1; i <= m.maxRc; i++ {
+		// Sleep between attempts of reconnecting to avoid consecutive errors
+		if i > 1 {
+			step := time.Duration(int64(i-1)*m.rcStepTime) * time.Second
+			time.Sleep(step)
+		}
+
+		logger.Infof("Attempting to reconnect [%d / %d]", i, m.maxRc)
+
+		if err := m.connectToBroker(); err != nil {
+			logger.WithError(err).Warning("Error when connecting to broker: Continue another attempt to reconnect")
+			continue
+		}
+
+		if err := m.StartConsuming(); err != nil {
+			logger.WithError(err).Warning("Error when starting to consume subscribers: Continue another attempt to reconnect")
+			continue
+		}
+
+		logger.Infof("Succesfully reconnect after %d attempts", i)
+
+		return nil
+	}
+
+	return errors.New("maximum number of reconnect is reached")
+}
+
+func (m *RabbitMqClient) setRcStepTime(t int64) {
+	m.rcStepTime = t
 }
 
 func consumeLoop(wg *sync.WaitGroup, channel *amqp.Channel, deliveries <-chan amqp.Delivery, handlerFunc MessageHandler, names *QueueNameGenerator) {
