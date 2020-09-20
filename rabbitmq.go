@@ -242,7 +242,7 @@ func (m *RabbitMqClient) reconnect() error {
 	return errors.New("maximum number of reconnect is reached")
 }
 
-func (m *RabbitMqClient) setRcStepTime(t int64) {
+func (m *RabbitMqClient) SetRcStepTime(t int64) {
 	m.rcStepTime = t
 }
 
