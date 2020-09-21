@@ -217,16 +217,16 @@ func (m *RabbitMqClient) connectToBroker() error {
 func (m *RabbitMqClient) reconnect() error {
 	logger := logrus.WithField("method", "reconnect").WithField("url", m.url)
 
-	var i int
+	var currentRcAttempt int
 	for {
-		i++
+		currentRcAttempt++
 		// Sleep between attempts of reconnecting to avoid consecutive errors
-		if i > 1 {
-			step := time.Duration(int64(i-1)*m.rcStepTime) * time.Second
+		if currentRcAttempt > 1 {
+			step := time.Duration(int64(currentRcAttempt-1)*m.rcStepTime) * time.Second
 			time.Sleep(step)
 		}
 
-		logger.Infof("Attempting to reconnect #%d", i)
+		logger.Infof("Attempting to reconnect #%d", currentRcAttempt)
 
 		if err := m.connectToBroker(); err != nil {
 			logger.WithError(err).Warning("Error when connecting to broker: Continue another attempt to reconnect")
@@ -238,7 +238,7 @@ func (m *RabbitMqClient) reconnect() error {
 			continue
 		}
 
-		logger.Infof("Succesfully reconnect after %d attempts", i)
+		logger.Infof("Succesfully reconnect after %d attempts", currentRcAttempt)
 
 		return nil
 	}
