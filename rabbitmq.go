@@ -19,15 +19,13 @@ type RabbitMqClient struct {
 	consumerWg  sync.WaitGroup
 	rcWg        sync.WaitGroup
 	rcStepTime  int64
-	maxRc       int
 	subscribers []subscriber
 	threadNum   int
 }
 
-func NewRabbitMqClient(conn string, threadNum int, maxReconnect int) *RabbitMqClient {
+func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 	mc := &RabbitMqClient{
 		url:       conn,
-		maxRc:     maxReconnect,
 		threadNum: threadNum,
 	}
 
@@ -191,23 +189,27 @@ func (m *RabbitMqClient) connectToBroker() error {
 	}
 
 	// spin up listener for connection error
-	if m.maxRc > 0 {
-		m.rcWg.Add(1)
-		go func() {
-			logrus.Info("About to start listening to NotifyClose")
-			notifyCloseErr := <-m.conn.NotifyClose(make(chan *amqp.Error))
-			logrus.WithError(notifyCloseErr).Warning("Receive error from NotifyClose")
+	m.rcWg.Add(1)
+	go func() {
+		logrus.Info("About to start listening to NotifyClose")
+		notifyCloseErr := <-m.conn.NotifyClose(make(chan *amqp.Error))
+		logrus.WithError(notifyCloseErr).Warning("Receive error from NotifyClose")
 
-			if notifyCloseErr != nil {
-				logrus.Info("Connection is closed by server: Proceed to reconnect")
-				if err := m.reconnect(); err != nil {
-					panic(err)
-				}
+		if notifyCloseErr != nil {
+			logrus.Info("Connection is closed by server: Proceed to reconnect")
+			if err := m.reconnect(); err != nil {
+				panic(err)
 			}
+			return
+		}
 
-			m.rcWg.Done()
-		}()
-	}
+		// NOTE: If connection is closed by application (i.e. msgBus.Close())
+		// we will receive nil value of notifyCloseErr.
+		// https://stackoverflow.com/questions/41991926/how-to-detect-dead-rabbitmq-connection#comment76716804_41992811
+		logrus.Info("Connection is closed by application: Skipping reconnect")
+
+		m.rcWg.Done()
+	}()
 
 	return nil
 }
@@ -215,14 +217,16 @@ func (m *RabbitMqClient) connectToBroker() error {
 func (m *RabbitMqClient) reconnect() error {
 	logger := logrus.WithField("method", "reconnect").WithField("url", m.url)
 
-	for i := 1; i <= m.maxRc; i++ {
+	var i int
+	for {
+		i++
 		// Sleep between attempts of reconnecting to avoid consecutive errors
 		if i > 1 {
 			step := time.Duration(int64(i-1)*m.rcStepTime) * time.Second
 			time.Sleep(step)
 		}
 
-		logger.Infof("Attempting to reconnect [%d / %d]", i, m.maxRc)
+		logger.Infof("Attempting to reconnect #%d", i)
 
 		if err := m.connectToBroker(); err != nil {
 			logger.WithError(err).Warning("Error when connecting to broker: Continue another attempt to reconnect")
@@ -238,8 +242,6 @@ func (m *RabbitMqClient) reconnect() error {
 
 		return nil
 	}
-
-	return errors.New("maximum number of reconnect is reached")
 }
 
 func (m *RabbitMqClient) SetRcStepTime(t int64) {
