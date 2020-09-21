@@ -21,6 +21,7 @@ type RabbitMqClient struct {
 	rcStepTime  int64
 	subscribers []subscriber
 	threadNum   int
+	maxPubRetry int
 }
 
 func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
@@ -32,6 +33,9 @@ func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 	// set default rcStepTime
 	mc.rcStepTime = 10
 
+	// set default maxPubRetry
+	mc.maxPubRetry = 3
+
 	if err := mc.connectToBroker(); err != nil {
 		panic(err)
 	}
@@ -41,6 +45,26 @@ func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 
 func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 	logger := logrus.WithField("method", "Publish")
+
+	err := m.publishMessageToExchange(topicName, body)
+	if err == nil {
+		return nil
+	}
+
+	logger.WithError(err).Warning("Error when publishing message: Proceed to retry")
+
+	err = m.retryPublish(topicName, body, m.maxPubRetry)
+	if err == nil {
+		return nil
+	}
+
+	logger.WithError(err).Error("Error after doing retries on publishing")
+
+	return err
+}
+
+func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte) error {
+	logger := logrus.WithField("method", "publishMessageToExchange")
 	if m.conn == nil {
 		panic("Tried to send message before connection was initialized. Don't do that.")
 	}
@@ -52,6 +76,7 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 		}
 	}()
 	if err != nil {
+		logrus.WithError(err).Error("Error when getting channel from connection")
 		return err
 	}
 
@@ -64,7 +89,10 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 		false,     // noWait
 		nil,       // arguments
 	)
-	failOnError(err, "Failed to register an Exchange")
+	if err != nil {
+		logrus.WithError(err).Error("Error when registering exchange")
+		return err
+	}
 
 	// Publishes a message onto the queue.
 	err = ch.Publish(
@@ -76,8 +104,34 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 			ContentType: "application/json",
 			Body:        body, // Our JSON body as []byte
 		})
+	if err != nil {
+		logrus.WithError(err).Error("Error when publishing a message to exchange")
+		return err
+	}
+
 	logrus.Debugf("A message was sent to exchange %v: %v", topicName, string(body))
-	return err
+	return nil
+}
+
+func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry int) error {
+	logger := logrus.WithField("method", "retryPublish")
+
+	for i := 1; i <= maxRetry; i++ {
+		logger.Infof("Attempting to retry [%d / %d]", i, maxRetry)
+
+		if err := m.publishMessageToExchange(topicName, body); err != nil {
+			continue
+		}
+
+		logger.Debug("Retry success")
+		return nil
+	}
+
+	return errors.New("max retry attempt for publish is reached")
+}
+
+func (m *RabbitMqClient) SetMaxPubRetry(maxPubRetry int) {
+	m.maxPubRetry = maxPubRetry
 }
 
 func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc MessageHandler) error {
