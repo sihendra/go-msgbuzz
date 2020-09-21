@@ -14,14 +14,15 @@ import (
 
 // RabbitMqClient RabbitMq implementation of MessageBus
 type RabbitMqClient struct {
-	conn        *amqp.Connection
-	url         string
-	consumerWg  sync.WaitGroup
-	rcWg        sync.WaitGroup
-	rcStepTime  int64
-	subscribers []subscriber
-	threadNum   int
-	maxPubRetry int
+	conn             *amqp.Connection
+	url              string
+	consumerWg       sync.WaitGroup
+	rcWg             sync.WaitGroup
+	rcStepTime       int64
+	subscribers      []subscriber
+	threadNum        int
+	maxPubRetry      int
+	pubRetryStepTime int64
 }
 
 func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
@@ -35,6 +36,7 @@ func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 
 	// set default maxPubRetry
 	mc.maxPubRetry = 3
+	mc.pubRetryStepTime = 10
 
 	if err := mc.connectToBroker(); err != nil {
 		panic(err)
@@ -117,6 +119,9 @@ func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry in
 	logger := logrus.WithField("method", "retryPublish")
 
 	for i := 1; i <= maxRetry; i++ {
+		step := int64(i) * m.pubRetryStepTime
+		time.Sleep(time.Duration(step) * time.Second)
+
 		logger.Infof("Attempting to retry [%d / %d]", i, maxRetry)
 
 		if err := m.publishMessageToExchange(topicName, body); err != nil {
@@ -132,6 +137,10 @@ func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry in
 
 func (m *RabbitMqClient) SetMaxPubRetry(maxPubRetry int) {
 	m.maxPubRetry = maxPubRetry
+}
+
+func (m *RabbitMqClient) SetPubRetryStepTime(pubRetryStepTime int64) {
+	m.pubRetryStepTime = pubRetryStepTime
 }
 
 func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc MessageHandler) error {
