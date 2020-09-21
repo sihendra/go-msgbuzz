@@ -238,8 +238,6 @@ func (m *RabbitMqClient) reconnect() error {
 			continue
 		}
 
-		logger.Infof("Succesfully reconnect after %d attempts", currentRcAttempt)
-
 		return nil
 	}
 }
