@@ -15,7 +15,7 @@ test-unit: dep
 
 test-integration-no-infra: dep
 	@echo ">> Running Integration Test"
-	@env RABBITMQ_URL=amqp://127.0.0.1:56723/ go test -tags=integration -failfast -count=1 -p=1 -cover -covermode=atomic ./...
+	@env $$(cat .env.testing | xargs) go test -tags=integration -failfast -count=1 -p=1 -cover -covermode=atomic ./...
 
 test-integration: test-infra-up test-integration-no-infra test-infra-down
 
@@ -28,4 +28,13 @@ test-infra-down:
 	@echo ">> Shutting Down Rabbit MQ"
 	@-docker kill go-msgbuzz-test-rabbitmq
 
-.PHONY: build dep test-all test-all-no-infra test-unit test-integration test-integration-no-infra test-infra-up test-infra-down
+dummy-rabbitmq-infra-up: dummy-rabbitmq-infra-down
+	@echo ">> Starting Dummy Rabbit MQ"
+	@docker run --name go-msgbuzz-dummy-rabbitmq -p 5673:5672 -d --rm rabbitmq:3
+	@docker exec go-msgbuzz-dummy-rabbitmq sh -c 'sleep 5; rabbitmqctl wait /var/lib/rabbitmq/mnesia/rabbit@$$(hostname).pid'	
+
+dummy-rabbitmq-infra-down:
+	@echo ">> Shutting Down Dummy Rabbit MQ"
+	@-docker kill go-msgbuzz-dummy-rabbitmq
+
+.PHONY: build dep test-all test-all-no-infra test-unit test-integration test-integration-no-infra test-infra-up test-infra-down dummy-rabbitmq-infra-up dummy-rabbitmq-infra-down
