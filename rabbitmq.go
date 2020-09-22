@@ -72,9 +72,11 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte)
 	}
 	ch, err := m.conn.Channel() // Get a channel from the connection
 	defer func() {
-		errClose := ch.Close()
-		if errClose != nil {
-			logger.WithError(errClose).Warning("Error when closing channel")
+		if ch != nil {
+			errClose := ch.Close()
+			if errClose != nil {
+				logger.WithError(errClose).Warning("Error when closing channel")
+			}
 		}
 	}()
 	if err != nil {
@@ -246,6 +248,7 @@ func (m *RabbitMqClient) connectToBroker() error {
 	}
 
 	var err error
+	// NOTE: m.conn will be nil if this Dial is failed.
 	m.conn, err = amqp.Dial(fmt.Sprintf("%s/", m.url))
 	if err != nil {
 		return errors.New("failed to connect to AMQP compatible broker at: " + m.url + err.Error())
