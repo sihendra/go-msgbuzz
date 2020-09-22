@@ -36,7 +36,7 @@ func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 
 	// set default maxPubRetry
 	mc.maxPubRetry = 3
-	mc.pubRetryStepTime = 10
+	mc.pubRetryStepTime = 2
 
 	if err := mc.connectToBroker(); err != nil {
 		panic(err)
