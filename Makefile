@@ -5,9 +5,9 @@ dep:
 	@echo ">> Downloading Dependencies"
 	@go mod download
 
-test-all: test-unit test-integration-with-infra
+test-all: test-unit test-integration
 
-test-all-no-infra: test-unit test-integration
+test-all-no-infra: test-unit test-integration-no-infra
 
 test-unit: dep
 	@echo ">> Running Unit Test"
