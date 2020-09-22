@@ -68,19 +68,19 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte) error {
 	logger := logrus.WithField("method", "publishMessageToExchange")
 	if m.conn == nil {
-		panic("Tried to send message before connection was initialized. Don't do that.")
+		return errors.New("tried to send message before connection was initialized")
 	}
 	ch, err := m.conn.Channel() // Get a channel from the connection
+	if err != nil {
+		logger.WithError(err).Error("Error when getting channel from connection")
+		return err
+	}
 	defer func() {
 		errClose := ch.Close()
 		if errClose != nil {
 			logger.WithError(errClose).Warning("Error when closing channel")
 		}
 	}()
-	if err != nil {
-		logrus.WithError(err).Error("Error when getting channel from connection")
-		return err
-	}
 
 	err = ch.ExchangeDeclare(
 		topicName, // name of the exchange
@@ -92,7 +92,7 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte)
 		nil,       // arguments
 	)
 	if err != nil {
-		logrus.WithError(err).Error("Error when registering exchange")
+		logger.WithError(err).Error("Error when registering exchange")
 		return err
 	}
 
@@ -107,11 +107,11 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte)
 			Body:        body, // Our JSON body as []byte
 		})
 	if err != nil {
-		logrus.WithError(err).Error("Error when publishing a message to exchange")
+		logger.WithError(err).Error("Error when publishing a message to exchange")
 		return err
 	}
 
-	logrus.Debugf("A message was sent to exchange %v: %v", topicName, string(body))
+	logger.Debugf("A message was sent to exchange %v: %v", topicName, string(body))
 	return nil
 }
 
