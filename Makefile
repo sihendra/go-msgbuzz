@@ -15,7 +15,7 @@ test-unit: dep
 
 test-integration-no-infra: dep
 	@echo ">> Running Integration Test"
-	@env RABBITMQ_URL=amqp://127.0.0.1:56723/ go test -tags=integration -failfast -count=1 -p=1 -cover -covermode=atomic ./...
+	@env $$(cat .env.testing | xargs) go test -tags=integration -failfast -count=1 -p=1 -cover -covermode=atomic ./...
 
 test-integration: test-infra-up test-integration-no-infra test-infra-down
 
