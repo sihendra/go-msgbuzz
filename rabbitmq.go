@@ -1,45 +1,86 @@
 package msgbuzz
 
 import (
+	"errors"
 	"fmt"
-	"github.com/sirupsen/logrus"
-	"github.com/streadway/amqp"
 	"reflect"
 	"strconv"
 	"sync"
+	"time"
+
+	"github.com/sirupsen/logrus"
+	"github.com/streadway/amqp"
 )
 
 // RabbitMqClient RabbitMq implementation of MessageBus
 type RabbitMqClient struct {
-	conn        *amqp.Connection
-	consumerWg  sync.WaitGroup
-	subscribers []subscriber
-	threadNum   int
+	conn             *amqp.Connection
+	url              string
+	consumerWg       sync.WaitGroup
+	rcWg             sync.WaitGroup
+	rcStepTime       int64
+	subscribers      []subscriber
+	threadNum        int
+	maxPubRetry      int
+	pubRetryStepTime int64
 }
 
 func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 	mc := &RabbitMqClient{
+		url:       conn,
 		threadNum: threadNum,
 	}
-	mc.connectToBroker(conn)
+
+	// set default rcStepTime
+	mc.rcStepTime = 10
+
+	// set default maxPubRetry
+	mc.maxPubRetry = 3
+	mc.pubRetryStepTime = 2
+
+	if err := mc.connectToBroker(); err != nil {
+		panic(err)
+	}
+
 	return mc
 }
 
 func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 	logger := logrus.WithField("method", "Publish")
+
+	err := m.publishMessageToExchange(topicName, body)
+	if err == nil {
+		return nil
+	}
+
+	logger.WithError(err).Warning("Error when publishing message: Proceed to retry")
+
+	err = m.retryPublish(topicName, body, m.maxPubRetry)
+	if err == nil {
+		return nil
+	}
+
+	logger.WithError(err).Error("Error after doing retries on publishing")
+
+	return err
+}
+
+func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte) error {
+	logger := logrus.WithField("method", "publishMessageToExchange")
 	if m.conn == nil {
-		panic("Tried to send message before connection was initialized. Don't do that.")
+		return errors.New("tried to send message before connection was initialized")
 	}
 	ch, err := m.conn.Channel() // Get a channel from the connection
+	if err != nil {
+		logger.WithError(err).Error("Error when getting channel from connection")
+		return err
+	}
 	defer func() {
 		errClose := ch.Close()
 		if errClose != nil {
 			logger.WithError(errClose).Warning("Error when closing channel")
 		}
 	}()
-	if err != nil {
-		return err
-	}
 
 	err = ch.ExchangeDeclare(
 		topicName, // name of the exchange
@@ -50,7 +91,10 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 		false,     // noWait
 		nil,       // arguments
 	)
-	failOnError(err, "Failed to register an Exchange")
+	if err != nil {
+		logger.WithError(err).Error("Error when registering exchange")
+		return err
+	}
 
 	// Publishes a message onto the queue.
 	err = ch.Publish(
@@ -62,8 +106,41 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 			ContentType: "application/json",
 			Body:        body, // Our JSON body as []byte
 		})
-	logrus.Debugf("A message was sent to exchange %v: %v", topicName, string(body))
-	return err
+	if err != nil {
+		logger.WithError(err).Error("Error when publishing a message to exchange")
+		return err
+	}
+
+	logger.Debugf("A message was sent to exchange %v: %v", topicName, string(body))
+	return nil
+}
+
+func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry int) error {
+	logger := logrus.WithField("method", "retryPublish")
+
+	for i := 1; i <= maxRetry; i++ {
+		step := int64(i) * m.pubRetryStepTime
+		time.Sleep(time.Duration(step) * time.Second)
+
+		logger.Infof("Attempting to retry [%d / %d]", i, maxRetry)
+
+		if err := m.publishMessageToExchange(topicName, body); err != nil {
+			continue
+		}
+
+		logger.Debug("Retry success")
+		return nil
+	}
+
+	return errors.New("max retry attempt for publish is reached")
+}
+
+func (m *RabbitMqClient) SetMaxPubRetry(maxPubRetry int) {
+	m.maxPubRetry = maxPubRetry
+}
+
+func (m *RabbitMqClient) SetPubRetryStepTime(pubRetryStepTime int64) {
+	m.pubRetryStepTime = pubRetryStepTime
 }
 
 func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc MessageHandler) error {
@@ -98,6 +175,8 @@ func (m *RabbitMqClient) StartConsuming() error {
 	}
 
 	m.consumerWg.Wait()
+
+	m.rcWg.Wait()
 
 	return nil
 }
@@ -161,16 +240,73 @@ type subscriber struct {
 	messageHandler MessageHandler
 }
 
-func (m *RabbitMqClient) connectToBroker(connectionString string) {
-	if connectionString == "" {
-		panic("Cannot initialize connection to broker, connectionString not set. Have you initialized?")
+func (m *RabbitMqClient) connectToBroker() error {
+	if m.url == "" {
+		return errors.New("cannot initialize connection to broker, connectionString not set. Have you initialized?")
 	}
 
 	var err error
-	m.conn, err = amqp.Dial(fmt.Sprintf("%s/", connectionString))
+	m.conn, err = amqp.Dial(fmt.Sprintf("%s/", m.url))
 	if err != nil {
-		panic("Failed to connect to AMQP compatible broker at: " + connectionString + err.Error())
+		return errors.New("failed to connect to AMQP compatible broker at: " + m.url + err.Error())
 	}
+
+	// spin up listener for connection error
+	m.rcWg.Add(1)
+	go func() {
+		logrus.Info("About to start listening to NotifyClose")
+		notifyCloseErr := <-m.conn.NotifyClose(make(chan *amqp.Error))
+		logrus.WithError(notifyCloseErr).Warning("Receive error from NotifyClose")
+
+		if notifyCloseErr != nil {
+			logrus.Info("Connection is closed by server: Proceed to reconnect")
+			if err := m.reconnect(); err != nil {
+				panic(err)
+			}
+			return
+		}
+
+		// NOTE: If connection is closed by application (i.e. msgBus.Close())
+		// we will receive nil value of notifyCloseErr.
+		// https://stackoverflow.com/questions/41991926/how-to-detect-dead-rabbitmq-connection#comment76716804_41992811
+		logrus.Info("Connection is closed by application: Skipping reconnect")
+
+		m.rcWg.Done()
+	}()
+
+	return nil
+}
+
+func (m *RabbitMqClient) reconnect() error {
+	logger := logrus.WithField("method", "reconnect").WithField("url", m.url)
+
+	var currentRcAttempt int
+	for {
+		currentRcAttempt++
+		// Sleep between attempts of reconnecting to avoid consecutive errors
+		if currentRcAttempt > 1 {
+			step := time.Duration(int64(currentRcAttempt-1)*m.rcStepTime) * time.Second
+			time.Sleep(step)
+		}
+
+		logger.Infof("Attempting to reconnect #%d", currentRcAttempt)
+
+		if err := m.connectToBroker(); err != nil {
+			logger.WithError(err).Warning("Error when connecting to broker: Continue another attempt to reconnect")
+			continue
+		}
+
+		if err := m.StartConsuming(); err != nil {
+			logger.WithError(err).Warning("Error when starting to consume subscribers: Continue another attempt to reconnect")
+			continue
+		}
+
+		return nil
+	}
+}
+
+func (m *RabbitMqClient) SetRcStepTime(t int64) {
+	m.rcStepTime = t
 }
 
 func consumeLoop(wg *sync.WaitGroup, channel *amqp.Channel, deliveries <-chan amqp.Delivery, handlerFunc MessageHandler, names *QueueNameGenerator) {
