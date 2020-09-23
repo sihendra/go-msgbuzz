@@ -28,13 +28,4 @@ test-infra-down:
 	@echo ">> Shutting Down Rabbit MQ"
 	@-docker kill go-msgbuzz-test-rabbitmq
 
-dummy-rabbitmq-infra-up: dummy-rabbitmq-infra-down
-	@echo ">> Starting Dummy Rabbit MQ"
-	@docker run --name go-msgbuzz-dummy-rabbitmq -p 5673:5672 -d --rm rabbitmq:3
-	@docker exec go-msgbuzz-dummy-rabbitmq sh -c 'sleep 5; rabbitmqctl wait /var/lib/rabbitmq/mnesia/rabbit@$$(hostname).pid'	
-
-dummy-rabbitmq-infra-down:
-	@echo ">> Shutting Down Dummy Rabbit MQ"
-	@-docker kill go-msgbuzz-dummy-rabbitmq
-
-.PHONY: build dep test-all test-all-no-infra test-unit test-integration test-integration-no-infra test-infra-up test-infra-down dummy-rabbitmq-infra-up dummy-rabbitmq-infra-down
+.PHONY: build dep test-all test-all-no-infra test-unit test-integration test-integration-no-infra test-infra-up test-infra-down

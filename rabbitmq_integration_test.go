@@ -47,10 +47,10 @@ func TestRabbitMqClient(t *testing.T) {
 
 func TestRabbitMqClient_ShouldReconnectAndPublishToTopic_WhenDisconnectFromRabbitMqServer(t *testing.T) {
 	// Init
-	err := StartRabbitMqDummyServer()
+	err := StartRabbitMqServer()
 	require.NoError(t, err)
 
-	rabbitClient := NewRabbitMqClient(os.Getenv("RABBITMQ_DUMMY_URL"), 1)
+	rabbitClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
 	rabbitClient.SetRcStepTime(1)
 	topicName := "msgbuzz.reconnect.test"
 	consumerName := "msgbuzz"
@@ -69,7 +69,7 @@ func TestRabbitMqClient_ShouldReconnectAndPublishToTopic_WhenDisconnectFromRabbi
 	time.Sleep(500 * time.Millisecond)
 
 	// restart RabbitMQ dummy server
-	err = RestartRabbitMqDummyServer()
+	err = RestartRabbitMqServer()
 	require.NoError(t, err)
 
 	err = rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"))

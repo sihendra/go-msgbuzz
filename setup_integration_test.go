@@ -12,40 +12,40 @@ import (
 // INFRA //
 // ----- //
 
-func StartRabbitMqDummyServer() error {
-	cmd := exec.Command("make", "dummy-rabbitmq-infra-up")
+func StartRabbitMqServer() error {
+	cmd := exec.Command("make", "test-infra-up")
 
 	stdout, err := cmd.Output()
 	if err != nil {
-		logrus.WithError(err).Error("Error when starting dummy RabbitMQ server")
+		logrus.WithError(err).Error("Error when starting RabbitMQ server")
 		return err
 	}
-	logrus.WithField("stdout", string(stdout)).Info("Success starting dummy RabbitMQ server")
+	logrus.WithField("stdout", string(stdout)).Info("Success starting RabbitMQ server")
 
 	return nil
 }
 
-func RestartRabbitMqDummyServer() error {
-	if err := stopRabbitMqDummyServer(); err != nil {
+func RestartRabbitMqServer() error {
+	if err := stopRabbitMqServer(); err != nil {
 		return err
 	}
 
-	if err := StartRabbitMqDummyServer(); err != nil {
+	if err := StartRabbitMqServer(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func stopRabbitMqDummyServer() error {
-	cmd := exec.Command("make", "dummy-rabbitmq-infra-down")
+func stopRabbitMqServer() error {
+	cmd := exec.Command("make", "test-infra-down")
 
 	stdout, err := cmd.Output()
 	if err != nil {
-		logrus.WithError(err).Error("Error when shutting down dummy RabbitMQ server")
+		logrus.WithError(err).Error("Error when shutting down RabbitMQ server")
 		return err
 	}
-	logrus.WithField("stdout", string(stdout)).Info("Success shutting dummy RabbitMQ server")
+	logrus.WithField("stdout", string(stdout)).Info("Success shutting RabbitMQ server")
 
 	return nil
 }
