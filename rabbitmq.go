@@ -3,12 +3,10 @@ package msgbuzz
 import (
 	"errors"
 	"fmt"
-	"reflect"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/streadway/amqp"
 )
 
@@ -46,39 +44,33 @@ func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 }
 
 func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
-	logger := logrus.WithField("method", "Publish")
 
 	err := m.publishMessageToExchange(topicName, body)
 	if err == nil {
 		return nil
 	}
 
-	logger.WithError(err).Warning("Error when publishing message: Proceed to retry")
-
 	err = m.retryPublish(topicName, body, m.maxPubRetry)
 	if err == nil {
 		return nil
 	}
 
-	logger.WithError(err).Error("Error after doing retries on publishing")
-
 	return err
 }
 
 func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte) error {
-	logger := logrus.WithField("method", "publishMessageToExchange")
 	if m.conn == nil {
 		return errors.New("tried to send message before connection was initialized")
 	}
 	ch, err := m.conn.Channel() // Get a channel from the connection
 	if err != nil {
-		logger.WithError(err).Error("Error when getting channel from connection")
+
 		return err
 	}
 	defer func() {
 		errClose := ch.Close()
 		if errClose != nil {
-			logger.WithError(errClose).Warning("Error when closing channel")
+
 		}
 	}()
 
@@ -92,7 +84,7 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte)
 		nil,       // arguments
 	)
 	if err != nil {
-		logger.WithError(err).Error("Error when registering exchange")
+
 		return err
 	}
 
@@ -107,28 +99,23 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte)
 			Body:        body, // Our JSON body as []byte
 		})
 	if err != nil {
-		logger.WithError(err).Error("Error when publishing a message to exchange")
+
 		return err
 	}
 
-	logger.Debugf("A message was sent to exchange %v: %v", topicName, string(body))
 	return nil
 }
 
 func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry int) error {
-	logger := logrus.WithField("method", "retryPublish")
 
 	for i := 1; i <= maxRetry; i++ {
 		step := int64(i) * m.pubRetryStepTime
 		time.Sleep(time.Duration(step) * time.Second)
 
-		logger.Infof("Attempting to retry [%d / %d]", i, maxRetry)
-
 		if err := m.publishMessageToExchange(topicName, body); err != nil {
 			continue
 		}
 
-		logger.Debug("Retry success")
 		return nil
 	}
 
@@ -158,7 +145,6 @@ func (m *RabbitMqClient) Close() error {
 		return fmt.Errorf("trying to close closed connection")
 	}
 	if m.conn != nil {
-		logrus.Infoln("Closing connection to AMQP broker")
 		return m.conn.Close()
 	}
 	return nil
@@ -187,8 +173,6 @@ func (m *RabbitMqClient) consume(topicName string, consumerName string, handlerF
 
 	err = ch.Qos(1, 0, false)
 	failOnError(err, "Failed setting qos prefetch to 1")
-
-	logrus.Infof("About to subscribe to topic: %s", topicName)
 
 	names := NewQueueNameGenerator(topicName, consumerName)
 	// create dlx exchange and queue
@@ -254,22 +238,18 @@ func (m *RabbitMqClient) connectToBroker() error {
 	// spin up listener for connection error
 	m.rcWg.Add(1)
 	go func() {
-		logrus.Info("About to start listening to NotifyClose")
+
+		// NOTE: If connection is closed by application (i.e. msgBus.Close())
+		// we will receive nil value of notifyCloseErr.
+		// https://stackoverflow.com/questions/41991926/how-to-detect-dead-rabbitmq-connection#comment76716804_41992811
 		notifyCloseErr := <-m.conn.NotifyClose(make(chan *amqp.Error))
-		logrus.WithError(notifyCloseErr).Warning("Receive error from NotifyClose")
 
 		if notifyCloseErr != nil {
-			logrus.Info("Connection is closed by server: Proceed to reconnect")
 			if err := m.reconnect(); err != nil {
 				panic(err)
 			}
 			return
 		}
-
-		// NOTE: If connection is closed by application (i.e. msgBus.Close())
-		// we will receive nil value of notifyCloseErr.
-		// https://stackoverflow.com/questions/41991926/how-to-detect-dead-rabbitmq-connection#comment76716804_41992811
-		logrus.Info("Connection is closed by application: Skipping reconnect")
 
 		m.rcWg.Done()
 	}()
@@ -278,7 +258,6 @@ func (m *RabbitMqClient) connectToBroker() error {
 }
 
 func (m *RabbitMqClient) reconnect() error {
-	logger := logrus.WithField("method", "reconnect").WithField("url", m.url)
 
 	var currentRcAttempt int
 	for {
@@ -289,15 +268,13 @@ func (m *RabbitMqClient) reconnect() error {
 			time.Sleep(step)
 		}
 
-		logger.Infof("Attempting to reconnect #%d", currentRcAttempt)
-
 		if err := m.connectToBroker(); err != nil {
-			logger.WithError(err).Warning("Error when connecting to broker: Continue another attempt to reconnect")
+
 			continue
 		}
 
 		if err := m.StartConsuming(); err != nil {
-			logger.WithError(err).Warning("Error when starting to consume subscribers: Continue another attempt to reconnect")
+
 			continue
 		}
 
@@ -314,10 +291,10 @@ func consumeLoop(wg *sync.WaitGroup, channel *amqp.Channel, deliveries <-chan am
 	for d := range deliveries {
 
 		if messageExpired(d) {
-			logrus.WithField("body", string(d.Body)).Info("Max retry reached dropping msg")
+
 			err := channel.Nack(d.DeliveryTag, false, false)
 			if err != nil {
-				logrus.WithError(err).WithField("message", string(d.Body)).Warning("Failed Nacking expired message")
+
 			}
 			continue
 		}
@@ -325,34 +302,28 @@ func consumeLoop(wg *sync.WaitGroup, channel *amqp.Channel, deliveries <-chan am
 		msgConfirm := NewRabbitMqMessageConfirm(channel, &d, names, d.Body)
 		err := handlerFunc(msgConfirm, d.Body)
 		if err != nil {
-			logrus.WithError(err).Warning("Exception when processing message")
+
 		}
 	}
 }
 
 func messageExpired(delivery amqp.Delivery) bool {
-	logrus.WithField("headers", delivery.Headers).Info("Message Headers")
+
 	if delivery.Headers == nil {
 		return false
 	}
 
 	maxRetries, ok := delivery.Headers["x-max-retries"]
 	if !ok {
-		logrus.Debug("No x-max-retries")
 		return false
 	}
 
 	maxRetriesStr, ok := maxRetries.(string)
 	if !ok {
-		logrus.
-			WithField("x-max-retires", maxRetries).
-			WithField("x-max-retires type", reflect.TypeOf(maxRetries).String()).
-			Warning("x-max-retries not string")
 		return false
 	}
 	maxRetriesInt64, err := strconv.ParseInt(maxRetriesStr, 10, 64)
 	if err != nil {
-		logrus.WithField("x-max-retries", maxRetriesStr).Warning("x-max-retires is not numeric")
 		return false
 	}
 
@@ -367,30 +338,30 @@ func messageExpired(delivery amqp.Delivery) bool {
 func getTotalFailed(delivery amqp.Delivery) (int64, error) {
 	deathHeader, ok := delivery.Headers["x-death"]
 	if !ok {
-		logrus.Debug("No x-death")
+
 		return 0, nil
 	}
 
 	deathList, ok := deathHeader.([]interface{})
 	if !ok {
-		logrus.WithField("type", reflect.TypeOf(deathHeader).String()).Warning("x-death not []interface{}")
+
 		return 0, fmt.Errorf("invalid x-death type: not []interface{}")
 	}
 
 	if len(deathList) == 0 {
-		logrus.Warning("x-death empty list")
+
 		return 0, nil
 	}
 
 	firstEntry, ok := deathList[0].(amqp.Table)
 	if !ok {
-		logrus.WithField("type", reflect.TypeOf(deathList[0]).String()).Warning("x-death[0] not type amqp.Table")
+
 		return 0, fmt.Errorf("invalid x-death[0] type: not amqp.Table")
 	}
 
 	countInt64, ok := firstEntry["count"].(int64)
 	if !ok {
-		logrus.WithField("type", reflect.TypeOf(firstEntry["count"]).String()).Warning("x-death[0]['count'] not int64")
+
 		return 0, fmt.Errorf("invalid x-death[0]['count'] type: not int64")
 	}
 
@@ -399,7 +370,7 @@ func getTotalFailed(delivery amqp.Delivery) (int64, error) {
 
 func failOnError(err error, msg string) {
 	if err != nil {
-		logrus.Errorf("%s: %s", msg, err)
+
 		panic(fmt.Sprintf("%s: %s", msg, err))
 	}
 }
