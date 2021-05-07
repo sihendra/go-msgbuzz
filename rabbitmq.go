@@ -256,10 +256,9 @@ func (m *RabbitMqClient) connectToBroker() error {
 	go func() {
 		logrus.Info("About to start listening to NotifyClose")
 		notifyCloseErr := <-m.conn.NotifyClose(make(chan *amqp.Error))
-		logrus.WithError(notifyCloseErr).Warning("Receive error from NotifyClose")
 
 		if notifyCloseErr != nil {
-			logrus.Info("Connection is closed by server: Proceed to reconnect")
+			logrus.WithError(notifyCloseErr).Info("Connection is closed by server: about to reconnect")
 			if err := m.reconnect(); err != nil {
 				panic(err)
 			}
