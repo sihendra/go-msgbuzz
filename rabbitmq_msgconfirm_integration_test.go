@@ -1,13 +1,15 @@
+//go:build integration
 // +build integration
 
 package msgbuzz_test
 
 import (
-	"github.com/sihendra/go-msgbuzz"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/sihendra/go-msgbuzz"
+	"github.com/stretchr/testify/require"
 )
 
 // TODO improve testing
@@ -37,6 +39,11 @@ func TestRabbitMqMessageConfirm_TotalFailed(t *testing.T) {
 	require.NoError(t, err)
 
 	err = mc.Publish(topicName, []byte("something"))
+	require.NoError(t, err)
+
+	// Test PublishWithRoutingKey
+	routingKey := "test_routing_key"
+	err = mc.PublishWithRoutingKey(topicName, []byte("something"), routingKey)
 	require.NoError(t, err)
 
 	go func(client *msgbuzz.RabbitMqClient) {

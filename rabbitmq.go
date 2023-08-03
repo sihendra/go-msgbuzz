@@ -45,7 +45,7 @@ func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 
 func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 
-	err := m.publishMessageToExchange(topicName, body)
+	err := m.publishMessageToExchange(topicName, body, "")
 	if err == nil {
 		return nil
 	}
@@ -58,7 +58,22 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte) error {
 	return err
 }
 
-func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte) error {
+func (m *RabbitMqClient) PublishWithRoutingKey(topicName string, body []byte, routingKey string) error {
+
+	err := m.publishMessageToExchange(topicName, body, routingKey)
+	if err == nil {
+		return nil
+	}
+
+	err = m.retryPublish(topicName, body, m.maxPubRetry)
+	if err == nil {
+		return nil
+	}
+
+	return err
+}
+
+func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte, routingKey string) error {
 	if m.conn == nil {
 		return errors.New("tried to send message before connection was initialized")
 	}
@@ -90,10 +105,10 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte)
 
 	// Publishes a message onto the queue.
 	err = ch.Publish(
-		topicName, // exchange
-		"",        // routing key
-		false,     // mandatory
-		false,     // immediate
+		topicName,  // exchange
+		routingKey, // routing key
+		false,      // mandatory
+		false,      // immediate
 		amqp.Publishing{
 			ContentType: "application/json",
 			Body:        body, // Our JSON body as []byte
@@ -112,7 +127,7 @@ func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry in
 		step := int64(i) * m.pubRetryStepTime
 		time.Sleep(time.Duration(step) * time.Second)
 
-		if err := m.publishMessageToExchange(topicName, body); err != nil {
+		if err := m.publishMessageToExchange(topicName, body, ""); err != nil {
 			continue
 		}
 

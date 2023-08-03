@@ -1,3 +1,4 @@
+//go:build integration
 // +build integration
 
 package msgbuzz
@@ -87,4 +88,18 @@ func TestRabbitMqClient_ShouldReconnectAndPublishToTopic_WhenDisconnectFromRabbi
 		require.True(t, msgSent)
 	}
 
+	err = rabbitClient.PublishWithRoutingKey(topicName, []byte("Hi from msgbuzz"), "test_routing_key")
+
+	// Expectations
+	// -- Should publish message
+	require.NoError(t, err)
+
+	// -- Should receive message
+	waitSec = 20
+	select {
+	case <-time.After(time.Duration(waitSec) * time.Second):
+		t.Fatalf("Not receiving message after %d seconds", waitSec)
+	case msgSent := <-actualMsgSent:
+		require.True(t, msgSent)
+	}
 }
