@@ -28,7 +28,7 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		defer rabbitClient.Close()
 
 		// -- wait for exchange and queue to be created
-		time.Sleep(3 * time.Second)
+		time.Sleep(1 * time.Second)
 
 		// Code under test
 		sentMessage := []byte("some msg from msgbuzz")
