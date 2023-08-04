@@ -43,7 +43,7 @@ func TestRabbitMqMessageConfirm_TotalFailed(t *testing.T) {
 
 	// Test PublishWithRoutingKey
 	routingKey := "test_routing_key"
-	err = mc.Publish(topicName, []byte("something"), routingKey)
+	err = mc.Publish(topicName, []byte("something"), msgbuzz.WithRoutingKey(routingKey))
 	require.NoError(t, err)
 
 	go func(client *msgbuzz.RabbitMqClient) {
