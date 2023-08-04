@@ -43,13 +43,13 @@ func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 	return mc
 }
 
-func (m *RabbitMqClient) Publish(topicName string, body []byte, routingKey ...string) error {
-	var err error
-	if len(routingKey) > 0 {
-		err = m.publishMessageToExchange(topicName, body, routingKey[0])
-	} else {
-		err = m.publishMessageToExchange(topicName, body, "")
+func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(*PublishOption)) error {
+	opt := &PublishOption{}
+	for _, o := range options {
+		o(opt)
 	}
+
+	err := m.publishMessageToExchange(topicName, body, opt.RoutingKey)
 	if err == nil {
 		return nil
 	}

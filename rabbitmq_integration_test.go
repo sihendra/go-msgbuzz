@@ -92,7 +92,7 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 	})
 
 	routingKey := "test_routing_key"
-	err = rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"), routingKey)
+	err = rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"), WithRoutingKey(routingKey))
 
 	// Expectations
 	// -- Should publish message
