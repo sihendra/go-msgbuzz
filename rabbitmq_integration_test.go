@@ -88,7 +88,8 @@ func TestRabbitMqClient_ShouldReconnectAndPublishToTopic_WhenDisconnectFromRabbi
 		require.True(t, msgSent)
 	}
 
-	err = rabbitClient.PublishWithRoutingKey(topicName, []byte("Hi from msgbuzz"), "test_routing_key")
+	routingKey := "test_routing_key"
+	err = rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"), routingKey)
 
 	// Expectations
 	// -- Should publish message
