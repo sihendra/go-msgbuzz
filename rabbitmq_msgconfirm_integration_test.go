@@ -41,11 +41,6 @@ func TestRabbitMqMessageConfirm_TotalFailed(t *testing.T) {
 	err = mc.Publish(topicName, []byte("something"))
 	require.NoError(t, err)
 
-	// Test PublishWithRoutingKey
-	routingKey := "test_routing_key"
-	err = mc.Publish(topicName, []byte("something"), msgbuzz.WithRoutingKey(routingKey))
-	require.NoError(t, err)
-
 	go func(client *msgbuzz.RabbitMqClient) {
 		time.Sleep(time.Duration((maxRetry+1)*delaySecond) * time.Second)
 		mc.Close()
@@ -53,4 +48,40 @@ func TestRabbitMqMessageConfirm_TotalFailed(t *testing.T) {
 
 	mc.StartConsuming()
 
+}
+
+func TestRabbitMqClient_Publish_WithRoutingKeysIntegration(t *testing.T) {
+	mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+	topicName := "msgbuzz.publish_routing_keys_test"
+	consumerName := "msgbuzz"
+
+	actualMsgReceivedChan := make(chan []byte)
+
+	// -- Listen to the topic to check the published message
+	err := mc.On(topicName, consumerName, func(confirm msgbuzz.MessageConfirm, bytes []byte) error {
+		actualMsgReceivedChan <- bytes
+		return confirm.Ack()
+	})
+	require.NoError(t, err)
+
+	go mc.StartConsuming()
+	defer mc.Close()
+
+	// -- Wait for the exchange and queue to be created
+	time.Sleep(3 * time.Second)
+
+	// Code under test
+	sentMessage := []byte("some msg from msgbuzz with routing keys")
+	routingKey := "routing_key"
+	err = mc.Publish(topicName, sentMessage, msgbuzz.WithRoutingKey(routingKey))
+	require.NoError(t, err)
+
+	// Expectations
+	waitSec := 20
+	select {
+	case <-time.After(time.Duration(waitSec) * time.Second):
+		t.Fatalf("Not receiving msg after %d seconds", waitSec)
+	case actualMessageReceived := <-actualMsgReceivedChan:
+		require.Equal(t, sentMessage, actualMessageReceived)
+	}
 }

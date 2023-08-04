@@ -48,6 +48,42 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		}
 	})
 
+	t.Run("ShouldPublishMessageToTopicWithRoutingKeys", func(t *testing.T) {
+		// Init
+		rabbitClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+		testTopicName := "msgbuzz.pubtest.routing"
+		actualMsgReceivedChan := make(chan []byte)
+
+		// -- listen topic to check published message
+		rabbitClient.On(testTopicName, "msgbuzz", func(confirm MessageConfirm, bytes []byte) error {
+			actualMsgReceivedChan <- bytes
+			return confirm.Ack()
+		})
+		go rabbitClient.StartConsuming()
+		defer rabbitClient.Close()
+
+		// -- wait for exchange and queue to be created
+		time.Sleep(3 * time.Second)
+
+		// Code under test
+		sentMessage := []byte("some msg from msgbuzz with routing keys")
+		routingKey := "routing_key"
+		err := rabbitClient.Publish(testTopicName, sentMessage, WithRoutingKey(routingKey))
+
+		// Expectations
+		// -- ShouldPublishMessageToTopic
+		require.NoError(t, err)
+
+		// -- Should receive correct msg
+		waitSec := 20
+		select {
+		case <-time.After(time.Duration(waitSec) * time.Second):
+			t.Fatalf("Not receiving msg after %d seconds", waitSec)
+		case actualMessageReceived := <-actualMsgReceivedChan:
+			require.Equal(t, sentMessage, actualMessageReceived)
+		}
+	})
+
 	t.Run("ShouldReconnectAndPublishToTopic_WhenDisconnectedFromRabbitMqServer", func(t *testing.T) {
 		// Init
 		err := StartRabbitMqServer()
@@ -91,19 +127,4 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		}
 	})
 
-	routingKey := "test_routing_key"
-	err = rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"), WithRoutingKey(routingKey))
-
-	// Expectations
-	// -- Should publish message
-	require.NoError(t, err)
-
-	// -- Should receive message
-	waitSec = 20
-	select {
-	case <-time.After(time.Duration(waitSec) * time.Second):
-		t.Fatalf("Not receiving message after %d seconds", waitSec)
-	case msgSent := <-actualMsgSent:
-		require.True(t, msgSent)
-	}
 }
