@@ -1,8 +1,8 @@
 package msgbuzz
 
 type MessageBus interface {
-	Publish(topicName string, msg []byte, options ...func(*PublishOption)) error
 	On(topicName string, consumerName string, handlerFunc MessageHandler) error
+	Publish(topicName string, msg []byte, options ...func(*MessageBusOption)) error
 }
 
 type MessageHandler func(MessageConfirm, []byte) error
@@ -13,26 +13,26 @@ type MessageConfirm interface {
 	Retry(delay int64, maxRetry int) error
 }
 
-type PublishOption struct {
+type MessageBusOption struct {
 	RoutingKey   string
 	ExchangeType string
 }
 
-func WithRoutingKey(routingKey string) func(*PublishOption) {
-	return func(p *PublishOption) {
-		p.RoutingKey = routingKey
+func WithRoutingKey(routingKey string) func(*MessageBusOption) {
+	return func(m *MessageBusOption) {
+		m.RoutingKey = routingKey
 	}
 }
 
-func WithExchangeType(exchangeType string) func(*PublishOption) {
-	return func(p *PublishOption) {
-		p.ExchangeType = exchangeType
+func WithExchangeType(exchangeType string) func(*MessageBusOption) {
+	return func(m *MessageBusOption) {
+		m.ExchangeType = exchangeType
 	}
 }
 
-func (p *PublishOption) GetExchangeType() string {
-	if p.ExchangeType == "" {
-		p.ExchangeType = "fanout"
+func (m *MessageBusOption) GetExchangeType() string {
+	if m.ExchangeType == "" {
+		m.ExchangeType = "fanout"
 	}
-	return p.ExchangeType
+	return m.ExchangeType
 }

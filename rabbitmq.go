@@ -43,8 +43,8 @@ func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 	return mc
 }
 
-func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(*PublishOption)) error {
-	opt := &PublishOption{}
+func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(*MessageBusOption)) error {
+	opt := &MessageBusOption{}
 	for _, o := range options {
 		o(opt)
 	}
