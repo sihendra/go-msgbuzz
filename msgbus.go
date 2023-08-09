@@ -14,19 +14,12 @@ type MessageConfirm interface {
 }
 
 type MessageBusOption struct {
-	RoutingKey   string
-	ExchangeType string
+	RoutingKey string
 }
 
 func WithRoutingKey(routingKey string) func(*MessageBusOption) {
 	return func(m *MessageBusOption) {
 		m.RoutingKey = routingKey
-	}
-}
-
-func WithExchangeType(exchangeType string) func(*MessageBusOption) {
-	return func(m *MessageBusOption) {
-		m.ExchangeType = exchangeType
 	}
 }
 
