@@ -24,8 +24,9 @@ func WithRoutingKey(routingKey string) func(*MessageBusOption) {
 }
 
 func (m *MessageBusOption) GetExchangeType() string {
-	if m.ExchangeType == "" {
-		m.ExchangeType = "fanout"
+	if m.RoutingKey == "" {
+		return "fanout"
 	}
-	return m.ExchangeType
+
+	return "direct"
 }
