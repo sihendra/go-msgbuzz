@@ -73,7 +73,7 @@ func TestRabbitMqClient_Publish_WithRoutingKeysIntegration(t *testing.T) {
 	// Code under test
 	sentMessage := []byte("some msg from msgbuzz with routing keys")
 	routingKey := "routing_key"
-	err = mc.Publish(topicName, sentMessage, msgbuzz.WithRoutingKey(routingKey))
+	err = mc.Publish(topicName, sentMessage, msgbuzz.WithRoutingKey(routingKey), msgbuzz.WithExchangeType("direct"))
 	require.NoError(t, err)
 
 	// Expectations

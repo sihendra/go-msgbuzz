@@ -49,7 +49,7 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(
 		o(opt)
 	}
 
-	err := m.publishMessageToExchange(topicName, body, opt.RoutingKey)
+	err := m.publishMessageToExchange(topicName, body, opt.RoutingKey, opt.GetExchangeType())
 	if err == nil {
 		return nil
 	}
@@ -62,7 +62,7 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(
 	return err
 }
 
-func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte, routingKey string) error {
+func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte, routingKey string, exchangeType string) error {
 	if m.conn == nil {
 		return errors.New("tried to send message before connection was initialized")
 	}
@@ -79,13 +79,13 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 	}()
 
 	err = ch.ExchangeDeclare(
-		topicName, // name of the exchange
-		"fanout",  // type
-		true,      // durable
-		false,     // delete when complete
-		false,     // internal
-		false,     // noWait
-		nil,       // arguments
+		topicName,    // name of the exchange
+		exchangeType, // type
+		true,         // durable
+		false,        // delete when complete
+		false,        // internal
+		false,        // noWait
+		nil,          // arguments
 	)
 	if err != nil {
 

@@ -68,7 +68,7 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		// Code under test
 		sentMessage := []byte("some msg from msgbuzz with routing keys")
 		routingKey := "routing_key"
-		err := rabbitClient.Publish(testTopicName, sentMessage, WithRoutingKey(routingKey))
+		err := rabbitClient.Publish(testTopicName, sentMessage, WithRoutingKey(routingKey), WithExchangeType("direct"))
 
 		// Expectations
 		// -- ShouldPublishMessageToTopic

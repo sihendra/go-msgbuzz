@@ -14,11 +14,25 @@ type MessageConfirm interface {
 }
 
 type PublishOption struct {
-	RoutingKey string
+	RoutingKey   string
+	ExchangeType string
 }
 
 func WithRoutingKey(routingKey string) func(*PublishOption) {
 	return func(p *PublishOption) {
 		p.RoutingKey = routingKey
 	}
+}
+
+func WithExchangeType(exchangeType string) func(*PublishOption) {
+	return func(p *PublishOption) {
+		p.ExchangeType = exchangeType
+	}
+}
+
+func (p *PublishOption) GetExchangeType() string {
+	if p.ExchangeType == "" {
+		p.ExchangeType = "fanout"
+	}
+	return p.ExchangeType
 }
