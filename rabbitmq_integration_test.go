@@ -53,12 +53,13 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		rabbitClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
 		testTopicName := "msgbuzz.pubtest.routing"
 		actualMsgReceivedChan := make(chan []byte)
+		routingKey := "routing_key"
 
 		// -- listen topic to check published message
-		rabbitClient.On(testTopicName, "msgbuzz", func(confirm MessageConfirm, bytes []byte) error {
+		rabbitClient.On(testTopicName, "", func(confirm MessageConfirm, bytes []byte) error {
 			actualMsgReceivedChan <- bytes
 			return confirm.Ack()
-		})
+		}, WithRoutingKey(routingKey), WithExchangeType("direct"))
 		go rabbitClient.StartConsuming()
 		defer rabbitClient.Close()
 
@@ -67,7 +68,6 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 
 		// Code under test
 		sentMessage := []byte("some msg from msgbuzz with routing keys")
-		routingKey := "routing_key"
 		err := rabbitClient.Publish(testTopicName, sentMessage, WithRoutingKey(routingKey), WithExchangeType("direct"))
 
 		// Expectations

@@ -1,8 +1,8 @@
 package msgbuzz
 
 type MessageBus interface {
-	On(topicName string, consumerName string, handlerFunc MessageHandler) error
 	Publish(topicName string, msg []byte, options ...func(*MessageBusOption)) error
+	On(topicName string, consumerName string, handlerFunc MessageHandler, options ...func(*MessageBusOption)) error
 }
 
 type MessageHandler func(MessageConfirm, []byte) error

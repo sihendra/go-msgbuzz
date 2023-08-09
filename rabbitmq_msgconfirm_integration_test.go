@@ -54,6 +54,7 @@ func TestRabbitMqClient_Publish_WithRoutingKeysIntegration(t *testing.T) {
 	mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
 	topicName := "msgbuzz.publish_routing_keys_test"
 	consumerName := "msgbuzz"
+	routingKey := "routing_key"
 
 	actualMsgReceivedChan := make(chan []byte)
 
@@ -61,7 +62,7 @@ func TestRabbitMqClient_Publish_WithRoutingKeysIntegration(t *testing.T) {
 	err := mc.On(topicName, consumerName, func(confirm msgbuzz.MessageConfirm, bytes []byte) error {
 		actualMsgReceivedChan <- bytes
 		return confirm.Ack()
-	})
+	}, msgbuzz.WithRoutingKey(routingKey), msgbuzz.WithExchangeType("direct"))
 	require.NoError(t, err)
 
 	go mc.StartConsuming()
@@ -72,7 +73,6 @@ func TestRabbitMqClient_Publish_WithRoutingKeysIntegration(t *testing.T) {
 
 	// Code under test
 	sentMessage := []byte("some msg from msgbuzz with routing keys")
-	routingKey := "routing_key"
 	err = mc.Publish(topicName, sentMessage, msgbuzz.WithRoutingKey(routingKey), msgbuzz.WithExchangeType("direct"))
 	require.NoError(t, err)
 

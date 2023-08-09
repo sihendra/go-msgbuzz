@@ -134,10 +134,17 @@ func (m *RabbitMqClient) SetPubRetryStepTime(pubRetryStepTime int64) {
 	m.pubRetryStepTime = pubRetryStepTime
 }
 
-func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc MessageHandler) error {
+func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc MessageHandler, options ...func(*MessageBusOption)) error {
+	opt := &MessageBusOption{}
+	for _, o := range options {
+		o(opt)
+	}
+
 	m.subscribers = append(m.subscribers, subscriber{
 		topicName:      topicName,
 		consumerName:   consumerName,
+		routingKeyName: opt.RoutingKey,
+		exchangeType:   opt.GetExchangeType(),
 		messageHandler: handlerFunc,
 	})
 
@@ -157,7 +164,7 @@ func (m *RabbitMqClient) Close() error {
 func (m *RabbitMqClient) StartConsuming() error {
 	for _, sub := range m.subscribers {
 		for i := 0; i < m.threadNum; i++ {
-			err := m.consume(sub.topicName, sub.consumerName, sub.messageHandler)
+			err := m.consume(sub.topicName, sub.consumerName, sub.routingKeyName, sub.exchangeType, sub.messageHandler)
 			if err != nil {
 				return err
 			}
@@ -171,14 +178,14 @@ func (m *RabbitMqClient) StartConsuming() error {
 	return nil
 }
 
-func (m *RabbitMqClient) consume(topicName string, consumerName string, handlerFunc MessageHandler) error {
+func (m *RabbitMqClient) consume(topicName string, consumerName string, routingName string, exchangeType string, handlerFunc MessageHandler) error {
 	ch, err := m.conn.Channel()
 	failOnError(err, "Failed to open a channel")
 
 	err = ch.Qos(1, 0, false)
 	failOnError(err, "Failed setting qos prefetch to 1")
 
-	names := NewQueueNameGenerator(topicName, consumerName)
+	names := NewQueueNameGenerator(topicName, consumerName, routingName, exchangeType)
 	// create dlx exchange and queue
 	err = ch.ExchangeDeclare(names.DlxExchange(), "direct", true, false, false, false, nil)
 	failOnError(err, "Failed declaring dlx exchange")
@@ -188,32 +195,32 @@ func (m *RabbitMqClient) consume(topicName string, consumerName string, handlerF
 	failOnError(err, "Failed binding dlx exchange and queue")
 
 	// create exchange for pub/sub
-	err = ch.ExchangeDeclare(names.Exchange(), "fanout", true, false, false, false, nil)
+	err = ch.ExchangeDeclare(names.Exchange(), names.ExchangeType(), true, false, false, false, nil)
 	failOnError(err, "Failed declaring pub/sub exchange")
 	// create dedicated queue for receiving message (create subscriber)
 	_, err = ch.QueueDeclare(names.Queue(), true, false, false, false, amqp.Table{"x-dead-letter-exchange": names.DlxExchange(), "x-dead-letter-routing-key": names.DlxQueue()})
 	failOnError(err, "Failed declaring pub/sub queue")
 	// bind created queue with pub/sub exchange
-	err = ch.QueueBind(names.Queue(), names.Queue(), names.Exchange(), false, nil)
+	err = ch.QueueBind(names.Queue(), names.RoutingKey(), names.Exchange(), false, nil)
 	failOnError(err, "Failed binding pub/sub exchange and queue")
 
 	// setup retry requeue exchange and binding
 	err = ch.ExchangeDeclare(names.RetryExchange(), "direct", true, false, false, false, nil)
 	failOnError(err, "Failed declaring retry exchange")
-	err = ch.QueueBind(names.Queue(), names.Queue(), names.RetryExchange(), false, nil)
+	err = ch.QueueBind(names.Queue(), names.RoutingKey(), names.RetryExchange(), false, nil)
 	failOnError(err, "Failed binding retry exchange and queue")
 	// create retry queue
 	_, err = ch.QueueDeclare(names.RetryQueue(), true, false, false, false, amqp.Table{"x-dead-letter-exchange": names.RetryExchange(), "x-dead-letter-routing-key": names.Queue()})
 	failOnError(err, "Failed creating retry queue")
 
 	deliveries, err := ch.Consume(
-		names.Queue(), // queue
-		"",            // consumer
-		false,         // auto-ack
-		false,         // exclusive
-		false,         // no-local
-		false,         // no-wait
-		nil,           // args
+		names.Queue(),     // queue
+		names.routingName, // consumer
+		false,             // auto-ack
+		false,             // exclusive
+		false,             // no-local
+		false,             // no-wait
+		nil,               // args
 	)
 	failOnError(err, "Failed to register a consumer")
 
@@ -225,6 +232,8 @@ func (m *RabbitMqClient) consume(topicName string, consumerName string, handlerF
 type subscriber struct {
 	topicName      string
 	consumerName   string
+	routingKeyName string
+	exchangeType   string
 	messageHandler MessageHandler
 }
 
