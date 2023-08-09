@@ -54,7 +54,7 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(
 		return nil
 	}
 
-	err = m.retryPublish(topicName, body, m.maxPubRetry)
+	err = m.retryPublish(topicName, body, m.maxPubRetry, opt.RoutingKey, opt.GetExchangeType())
 	if err == nil {
 		return nil
 	}
@@ -110,13 +110,13 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 	return nil
 }
 
-func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry int) error {
+func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry int, routingKey string, exchangeType string) error {
 
 	for i := 1; i <= maxRetry; i++ {
 		step := int64(i) * m.pubRetryStepTime
 		time.Sleep(time.Duration(step) * time.Second)
 
-		if err := m.publishMessageToExchange(topicName, body, ""); err != nil {
+		if err := m.publishMessageToExchange(topicName, body, routingKey, exchangeType); err != nil {
 			continue
 		}
 
