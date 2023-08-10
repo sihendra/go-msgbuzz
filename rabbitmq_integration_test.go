@@ -48,6 +48,92 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		}
 	})
 
+	t.Run("ShouldPublishMessageToTopicWithRoutingKeys", func(t *testing.T) {
+		// Init
+		rabbitClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+		testTopicName := "msgbuzz.pubtest.routing"
+		actualMsgReceivedChan := make(chan []byte)
+		routingKey := "routing_key"
+
+		ch, err := rabbitClient.conn.Channel()
+		require.NoError(t, err)
+		defer ch.Close()
+
+		// Declare a direct exchange
+		err = ch.ExchangeDeclare(
+			testTopicName,
+			"direct",
+			true,
+			false,
+			false,
+			false,
+			nil,
+		)
+		require.NoError(t, err)
+
+		// Declare queue to the exchange
+		q, err := ch.QueueDeclare(
+			testTopicName,
+			false,
+			false,
+			false,
+			false,
+			nil,
+		)
+		require.NoError(t, err)
+
+		// Bind a queue to the exchange with the routing key
+		err = ch.QueueBind(
+			q.Name,
+			routingKey,
+			testTopicName,
+			false,
+			nil,
+		)
+		require.NoError(t, err)
+
+		// Consume messages from the queue
+		msgs, err := ch.Consume(
+			q.Name,
+			"",
+			true,
+			false,
+			false,
+			false,
+			nil,
+		)
+		require.NoError(t, err)
+
+		// -- listen topic to check published message
+		go func() {
+			for msg := range msgs {
+				actualMsgReceivedChan <- msg.Body
+			}
+		}()
+
+		defer rabbitClient.Close()
+
+		// -- wait for exchange and queue to be created
+		time.Sleep(3 * time.Second)
+
+		// Code under test
+		sentMessage := []byte("some msg from msgbuzz with routing keys")
+		err = rabbitClient.Publish(testTopicName, sentMessage, WithRoutingKey(routingKey))
+
+		// Expectations
+		// -- ShouldPublishMessageToTopic
+		require.NoError(t, err)
+
+		// -- Should receive correct msg
+		waitSec := 20
+		select {
+		case <-time.After(time.Duration(waitSec) * time.Second):
+			t.Fatalf("Not receiving msg after %d seconds", waitSec)
+		case actualMessageReceived := <-actualMsgReceivedChan:
+			require.Equal(t, sentMessage, actualMessageReceived)
+		}
+	})
+
 	t.Run("ShouldReconnectAndPublishToTopic_WhenDisconnectedFromRabbitMqServer", func(t *testing.T) {
 		// Init
 		err := StartRabbitMqServer()
