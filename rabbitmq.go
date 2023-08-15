@@ -49,12 +49,12 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(
 		o(opt)
 	}
 
-	err := m.publishMessageToExchange(topicName, body, opt.RoutingKey, opt.GetExchangeType())
+	err := m.publishMessageToExchange(topicName, body, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
 	if err == nil {
 		return nil
 	}
 
-	err = m.retryPublish(topicName, body, m.maxPubRetry, opt.RoutingKey, opt.GetExchangeType())
+	err = m.retryPublish(topicName, body, m.maxPubRetry, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
 	if err == nil {
 		return nil
 	}

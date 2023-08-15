@@ -14,17 +14,21 @@ type MessageConfirm interface {
 }
 
 type MessageBusOption struct {
+	RabbitMq RabbitMqOption
+}
+
+type RabbitMqOption struct {
 	RoutingKey string
 }
 
-func WithRoutingKey(routingKey string) func(*MessageBusOption) {
+func WithRabbitMqRoutingKey(routingKey string) func(*MessageBusOption) {
 	return func(m *MessageBusOption) {
-		m.RoutingKey = routingKey
+		m.RabbitMq.RoutingKey = routingKey
 	}
 }
 
-func (m *MessageBusOption) GetExchangeType() string {
-	if m.RoutingKey == "" {
+func (m *MessageBusOption) GetRabbitMqExchangeType() string {
+	if m.RabbitMq.RoutingKey == "" {
 		return "fanout"
 	}
 
