@@ -1,49 +1,121 @@
+//go:build integration
 // +build integration
 
 package msgbuzz_test
 
 import (
-	"github.com/sihendra/go-msgbuzz"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/sihendra/go-msgbuzz"
+	"github.com/stretchr/testify/require"
 )
 
 // TODO improve testing
-func TestRabbitMqMessageConfirm_TotalFailed(t *testing.T) {
-	mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
-	topicName := "msgconfirm_total_failed_test"
-	consumerName := "msgconfirm_test"
+func TestRabbitMqMessageConfirm_Retry(t *testing.T) {
 
-	maxRetry := 2
-	maxAttempt := maxRetry + 1
-	delaySecond := 1
-	var attempt int
-	err := mc.On(topicName, consumerName, func(confirm msgbuzz.MessageConfirm, bytes []byte) error {
-		attempt++
-		t.Logf("Attempt: %d", attempt)
-		if attempt < maxAttempt {
-			err := confirm.Retry(int64(delaySecond), int(maxRetry))
-			require.NoError(t, err)
+	t.Run("ShouldRetry", func(t *testing.T) {
+		mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+		defer mc.Close()
+		topicName := "msgconfirm_retry_test"
+		consumerName := "msgconfirm_test"
+		doneChan := make(chan bool)
+
+		maxRetry := 3
+		expectedRetryCount := 1
+		expectedMaxAttempt := expectedRetryCount + 1 // retry + original msg
+		delaySecond := 1
+		var actualAttempt int
+		err := mc.On(topicName, consumerName, func(confirm msgbuzz.MessageConfirm, bytes []byte) error {
+			actualAttempt++
+			t.Logf("Attempt: %d", actualAttempt)
+			if shouldRetry := actualAttempt < expectedMaxAttempt; shouldRetry {
+				// CODE UNDER TEST
+				err := confirm.Retry(int64(delaySecond), maxRetry)
+				require.NoError(t, err)
+				return nil
+			}
+
+			confirm.Ack()
+			doneChan <- true
 			return nil
+		})
+		require.NoError(t, err)
+		go mc.StartConsuming()
+
+		// wait for exchange and queue to be created
+		time.Sleep(500 * time.Millisecond)
+
+		err = mc.Publish(topicName, []byte("something"))
+		require.NoError(t, err)
+
+		// wait until timeout or done
+		waitSec := 20
+		select {
+		case <-time.After(time.Duration(waitSec) * time.Second):
+			t.Fatalf("Timeout after %d seconds", waitSec)
+		case <-doneChan:
+			// Should retry n times
+			require.Equal(t, expectedMaxAttempt, actualAttempt)
 		}
-		err := confirm.Retry(int64(delaySecond), int(maxRetry))
-		require.Error(t, err)
-		require.Equal(t, "max retry reached", err.Error())
-
-		return nil
 	})
-	require.NoError(t, err)
 
-	err = mc.Publish(topicName, []byte("something"))
-	require.NoError(t, err)
+	t.Run("ShouldReturnError_WhenMaxRetryReached", func(t *testing.T) {
+		mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+		defer mc.Close()
+		topicName := "msgconfirm_retry_max_test"
+		consumerName := "msgconfirm_test"
+		doneChan := make(chan bool)
 
-	go func(client *msgbuzz.RabbitMqClient) {
-		time.Sleep(time.Duration((maxRetry+1)*delaySecond) * time.Second)
-		mc.Close()
-	}(mc)
+		maxRetry := 2
+		expectedRetryCount := 2
+		expectedMaxAttempt := expectedRetryCount + 1 // retry + original msg
+		delaySecond := 1
+		var actualAttempt int
+		err := mc.On(topicName, consumerName, func(confirm msgbuzz.MessageConfirm, bytes []byte) error {
+			actualAttempt++
+			t.Logf("Attempt: %d", actualAttempt)
+			if shouldRetry := actualAttempt < expectedMaxAttempt; shouldRetry {
+				// CODE UNDER TEST
+				err := confirm.Retry(int64(delaySecond), maxRetry)
+				require.NoError(t, err)
+				return nil
+			}
 
-	mc.StartConsuming()
+			// use defer so when following assertion fail will not block
+			defer func() {
+				confirm.Ack()
+				doneChan <- true
+			}()
+			// last attempt
+			err := confirm.Retry(int64(delaySecond), int(maxRetry))
+			// -- WhenMaxRetryReached
+			require.Equal(t, expectedRetryCount, actualAttempt-1)
+			// -- ShouldReturnError
+			require.Error(t, err)
+			require.Equal(t, "max retry reached", err.Error())
+
+			return nil
+		})
+		require.NoError(t, err)
+		go mc.StartConsuming()
+
+		// wait for exchange and queue to be created
+		time.Sleep(500 * time.Millisecond)
+
+		err = mc.Publish(topicName, []byte("something"))
+		require.NoError(t, err)
+
+		// wait until timeout or done
+		waitSec := 20
+		select {
+		case <-time.After(time.Duration(waitSec) * time.Second):
+			t.Fatalf("Timeout after %d seconds", waitSec)
+		case <-doneChan:
+			// Should retry n times
+			require.Equal(t, expectedMaxAttempt, actualAttempt)
+		}
+	})
 
 }
