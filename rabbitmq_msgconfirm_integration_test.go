@@ -4,11 +4,12 @@
 package msgbuzz_test
 
 import (
-	"github.com/sihendra/go-msgbuzz"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/sihendra/go-msgbuzz"
+	"github.com/stretchr/testify/require"
 )
 
 // TODO improve testing
