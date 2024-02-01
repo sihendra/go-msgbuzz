@@ -112,18 +112,19 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 
 func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry int, routingKey string, exchangeType string) error {
 
+	var lastError error
 	for i := 1; i <= maxRetry; i++ {
 		step := int64(i) * m.pubRetryStepTime
 		time.Sleep(time.Duration(step) * time.Second)
 
-		if err := m.publishMessageToExchange(topicName, body, routingKey, exchangeType); err != nil {
+		if lastError = m.publishMessageToExchange(topicName, body, routingKey, exchangeType); lastError != nil {
 			continue
 		}
 
 		return nil
 	}
 
-	return errors.New("max retry attempt for publish is reached")
+	return fmt.Errorf("max retry attempt for publish is reached: %w", lastError)
 }
 
 func (m *RabbitMqClient) SetMaxPubRetry(maxPubRetry int) {
