@@ -1,6 +1,7 @@
 package msgbuzz
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -21,6 +22,7 @@ type RabbitMqClient struct {
 	threadNum        int
 	maxPubRetry      int
 	pubRetryStepTime int64
+	pubChannelPool   *ChannelPool
 }
 
 func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
@@ -40,6 +42,12 @@ func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
 		panic(err)
 	}
 
+	pool, errPool := NewChannelPool(100, fmt.Sprintf("%s/", conn))
+	if errPool != nil {
+		panic(errPool)
+	}
+	mc.pubChannelPool = pool
+
 	return mc
 }
 
@@ -54,28 +62,31 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(
 		return nil
 	}
 
-	err = m.retryPublish(topicName, body, m.maxPubRetry, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
-	if err == nil {
-		return nil
-	}
+	//err = m.retryPublish(topicName, body, m.maxPubRetry, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
+	//if err == nil {
+	//	return nil
+	//}
 
 	return err
 }
 
 func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte, routingKey string, exchangeType string) error {
-	if m.conn == nil {
-		return errors.New("tried to send message before connection was initialized")
-	}
-	ch, err := m.conn.Channel() // Get a channel from the connection
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Second)
+	defer cancel()
 
+	var errPub error
+
+	ch, err := m.pubChannelPool.Get(ctx) // Get a channel from the pool
+	if err != nil {
 		return err
 	}
 	defer func() {
-		errClose := ch.Close()
-		if errClose != nil {
-
+		if errPub == nil {
+			// return channel to pool
+			m.pubChannelPool.Return(ch)
+			return
 		}
+		// don't return error channel to pool, it will be automatically closed and recreated
 	}()
 
 	err = ch.ExchangeDeclare(
@@ -88,12 +99,11 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 		nil,          // arguments
 	)
 	if err != nil {
-
 		return err
 	}
 
 	// Publishes a message onto the queue.
-	err = ch.Publish(
+	errPub = ch.Publish(
 		topicName,  // exchange
 		routingKey, // routing key
 		false,      // mandatory
@@ -102,9 +112,8 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 			ContentType: "application/json",
 			Body:        body, // Our JSON body as []byte
 		})
-	if err != nil {
-
-		return err
+	if errPub != nil {
+		return errPub
 	}
 
 	return nil
@@ -165,9 +174,9 @@ func (m *RabbitMqClient) StartConsuming() error {
 		}
 	}
 
-	m.consumerWg.Wait()
+	m.consumerWg.Wait() // wait until all consumers are closed (due to conn.close, cancel, etc)
 
-	m.rcWg.Wait()
+	m.rcWg.Wait() // will wait until reconnect complete
 
 	return nil
 }

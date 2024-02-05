@@ -147,9 +147,13 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 
 		// Code under test
 		rabbitClient.On(topicName, consumerName, func(confirm MessageConfirm, bytes []byte) error {
+			defer func() {
+				require.NoError(t, confirm.Ack())
+			}()
 			t.Logf("Receive message from topic %s", topicName)
 			actualMsgSent <- true
-			return confirm.Ack()
+			require.Equal(t, "Hi from msgbuzz", string(bytes))
+			return nil
 		})
 		go rabbitClient.StartConsuming()
 		defer rabbitClient.Close()
