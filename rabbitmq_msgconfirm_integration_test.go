@@ -16,7 +16,8 @@ import (
 func TestRabbitMqMessageConfirm_Retry(t *testing.T) {
 
 	t.Run("ShouldRetry", func(t *testing.T) {
-		mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+		mc, errClient := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), msgbuzz.WithConsumerThread(1))
+		require.NoError(t, errClient)
 		defer mc.Close()
 		topicName := "msgconfirm_retry_test"
 		consumerName := "msgconfirm_test"
@@ -62,7 +63,8 @@ func TestRabbitMqMessageConfirm_Retry(t *testing.T) {
 	})
 
 	t.Run("ShouldReturnError_WhenMaxRetryReached", func(t *testing.T) {
-		mc := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+		mc, errClient := msgbuzz.NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), msgbuzz.WithConsumerThread(1))
+		require.NoError(t, errClient)
 		defer mc.Close()
 		topicName := "msgconfirm_retry_max_test"
 		consumerName := "msgconfirm_test"

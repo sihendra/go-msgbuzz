@@ -15,7 +15,8 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 
 	t.Run("ShouldPublishMessageToTopic", func(t *testing.T) {
 		// Init
-		rabbitClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+		rabbitClient, errClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), WithConsumerThread(1))
+		require.NoError(t, errClient)
 		testTopicName := "msgbuzz.pubtest"
 		actualMsgReceivedChan := make(chan []byte)
 
@@ -50,7 +51,9 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 
 	t.Run("ShouldPublishMessageToTopicWithRoutingKeys", func(t *testing.T) {
 		// Init
-		rabbitClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+		rabbitClient, errClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), WithConsumerThread(1))
+		require.NoError(t, errClient)
+
 		testTopicName := "msgbuzz.pubtest.routing"
 		actualMsgReceivedChan := make(chan []byte)
 		routingKey := "routing_key"
@@ -139,7 +142,9 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		err := StartRabbitMqServer()
 		require.NoError(t, err)
 
-		rabbitClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), 1)
+		rabbitClient, errClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), WithConsumerThread(1))
+		require.NoError(t, errClient)
+
 		rabbitClient.SetRcStepTime(1)
 		topicName := "msgbuzz.reconnect.test"
 		consumerName := "msgbuzz"

@@ -13,42 +13,61 @@ import (
 
 // RabbitMqClient RabbitMq implementation of MessageBus
 type RabbitMqClient struct {
-	conn             *amqp.Connection
-	url              string
-	consumerWg       sync.WaitGroup
-	rcWg             sync.WaitGroup
-	rcStepTime       int64
-	subscribers      []subscriber
-	threadNum        int
-	maxPubRetry      int
-	pubRetryStepTime int64
-	pubChannelPool   *ChannelPool
+	conn           *amqp.Connection
+	url            string
+	consumerWg     sync.WaitGroup
+	rcWg           sync.WaitGroup
+	rcStepTime     int64
+	subscribers    []subscriber
+	threadNum      int
+	pubChannelPool *ChannelPool
 }
 
-func NewRabbitMqClient(conn string, threadNum int) *RabbitMqClient {
+type RabbitConfig struct {
+	ConsumerThread      int
+	PublisherMaxChannel int
+}
+
+type RabbitOption func(opt *RabbitConfig)
+
+func WithPubMaxChannel(maxChannel int) func(opt *RabbitConfig) {
+	return func(cfg *RabbitConfig) {
+		cfg.PublisherMaxChannel = maxChannel
+	}
+}
+
+func WithConsumerThread(num int) func(opt *RabbitConfig) {
+	return func(cfg *RabbitConfig) {
+		cfg.ConsumerThread = num
+	}
+}
+
+func NewRabbitMqClient(connStr string, opt ...RabbitOption) (*RabbitMqClient, error) {
+
+	cfg := defaultRabbitConfig()
+	for _, option := range opt {
+		option(&cfg)
+	}
+
 	mc := &RabbitMqClient{
-		url:       conn,
-		threadNum: threadNum,
+		url:       connStr,
+		threadNum: cfg.ConsumerThread,
 	}
 
 	// set default rcStepTime
 	mc.rcStepTime = 10
 
-	// set default maxPubRetry
-	mc.maxPubRetry = 3
-	mc.pubRetryStepTime = 2
-
 	if err := mc.connectToBroker(); err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	pool, errPool := NewChannelPool(100, fmt.Sprintf("%s/", conn))
+	pool, errPool := NewChannelPool(cfg.PublisherMaxChannel, fmt.Sprintf("%s/", connStr))
 	if errPool != nil {
-		panic(errPool)
+		return nil, errPool
 	}
 	mc.pubChannelPool = pool
 
-	return mc
+	return mc, nil
 }
 
 func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(*MessageBusOption)) error {
@@ -61,11 +80,6 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(
 	if err == nil {
 		return nil
 	}
-
-	//err = m.retryPublish(topicName, body, m.maxPubRetry, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
-	//if err == nil {
-	//	return nil
-	//}
 
 	return err
 }
@@ -119,31 +133,6 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 	return nil
 }
 
-func (m *RabbitMqClient) retryPublish(topicName string, body []byte, maxRetry int, routingKey string, exchangeType string) error {
-
-	var lastError error
-	for i := 1; i <= maxRetry; i++ {
-		step := int64(i) * m.pubRetryStepTime
-		time.Sleep(time.Duration(step) * time.Second)
-
-		if lastError = m.publishMessageToExchange(topicName, body, routingKey, exchangeType); lastError != nil {
-			continue
-		}
-
-		return nil
-	}
-
-	return fmt.Errorf("max retry attempt for publish is reached: %w", lastError)
-}
-
-func (m *RabbitMqClient) SetMaxPubRetry(maxPubRetry int) {
-	m.maxPubRetry = maxPubRetry
-}
-
-func (m *RabbitMqClient) SetPubRetryStepTime(pubRetryStepTime int64) {
-	m.pubRetryStepTime = pubRetryStepTime
-}
-
 func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc MessageHandler) error {
 	m.subscribers = append(m.subscribers, subscriber{
 		topicName:      topicName,
@@ -160,6 +149,9 @@ func (m *RabbitMqClient) Close() error {
 	}
 	if m.conn != nil {
 		return m.conn.Close()
+	}
+	if m.pubChannelPool != nil {
+		m.pubChannelPool.Close()
 	}
 	return nil
 }
@@ -386,5 +378,12 @@ func failOnError(err error, msg string) {
 	if err != nil {
 
 		panic(fmt.Sprintf("%s: %s", msg, err))
+	}
+}
+
+func defaultRabbitConfig() RabbitConfig {
+	return RabbitConfig{
+		ConsumerThread:      4,
+		PublisherMaxChannel: 10,
 	}
 }
