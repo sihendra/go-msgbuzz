@@ -144,14 +144,15 @@ func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc M
 }
 
 func (m *RabbitMqClient) Close() error {
+
+	if m.pubChannelPool != nil {
+		m.pubChannelPool.Close()
+	}
 	if m.conn == nil {
 		return fmt.Errorf("trying to close closed connection")
 	}
 	if m.conn != nil {
 		return m.conn.Close()
-	}
-	if m.pubChannelPool != nil {
-		m.pubChannelPool.Close()
 	}
 	return nil
 }

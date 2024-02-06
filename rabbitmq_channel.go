@@ -10,11 +10,10 @@ import (
 
 // ChannelPool represents a pool of AMQP channels.
 type ChannelPool struct {
-	sem    chan struct{}      // Semaphore to limit the number of concurrently acquired channels
-	idle   chan *amqp.Channel // Channel for storing idle (unused) channels
-	conn   *amqp.Connection   // AMQP connection
-	reConn sync.WaitGroup     // Reconnecting is running
-	mu     sync.Mutex         // Mutex for protecting concurrent access to the connection
+	sem  chan struct{}      // Semaphore to limit the number of concurrently acquired channels
+	idle chan *amqp.Channel // Channel for storing idle (unused) channels
+	conn *amqp.Connection   // AMQP connection
+	mu   sync.Mutex         // Mutex for protecting concurrent access to the connection
 }
 
 // NewChannelPool creates a new AMQP channel pool.
@@ -22,9 +21,8 @@ func NewChannelPool(limit int, amqpURI string) (*ChannelPool, error) {
 
 	// Create a new channel pool with the specified limit
 	pool := &ChannelPool{
-		sem:    make(chan struct{}, limit),
-		idle:   make(chan *amqp.Channel, limit),
-		reConn: sync.WaitGroup{},
+		sem:  make(chan struct{}, limit),
+		idle: make(chan *amqp.Channel, limit),
 	}
 
 	pool.initConnection(amqpURI)
@@ -104,7 +102,9 @@ func (p *ChannelPool) Return(ch *amqp.Channel) {
 
 func (p *ChannelPool) Remove(ch *amqp.Channel) {
 	_ = ch.Close()
-	<-p.sem // Reduce the semaphore, so it will create new channel on Get()
+	if len(p.sem) != 0 {
+		<-p.sem // Reduce the semaphore, so it will create new channel on Get()
+	}
 }
 
 // Close closes the AMQP connection and releases resources.
