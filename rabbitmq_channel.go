@@ -96,8 +96,9 @@ loop:
 					p.Remove(info.Channel)
 				} else {
 					// Put the channel back into the idle pool if it's still within the timeout
-					if len(p.idle) < p.config.PublisherMaxChannel {
-						p.idle <- info
+					select {
+					case p.idle <- info:
+					default:
 					}
 					break
 				}
