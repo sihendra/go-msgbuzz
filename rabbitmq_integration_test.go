@@ -4,6 +4,7 @@
 package msgbuzz
 
 import (
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -142,6 +143,7 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		err := StartRabbitMqServer()
 		require.NoError(t, err)
 
+		// Create rabbitmq client, this WILL CREATE CONNECTION for consumer and publisher
 		rabbitClient, errClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), WithConsumerThread(1))
 		require.NoError(t, errClient)
 
@@ -150,7 +152,6 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		consumerName := "msgbuzz"
 		actualMsgSent := make(chan bool)
 
-		// Code under test
 		rabbitClient.On(topicName, consumerName, func(confirm MessageConfirm, bytes []byte) error {
 			defer func() {
 				require.NoError(t, confirm.Ack())
@@ -163,12 +164,13 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		go rabbitClient.StartConsuming()
 		defer rabbitClient.Close()
 
-		// wait for exchange and queue to be created
-		time.Sleep(500 * time.Millisecond)
-
 		// restart RabbitMQ dummy server
 		err = RestartRabbitMqServer()
 		require.NoError(t, err)
+
+		// RESTART WILL TRIGGER consumer and publisher reconnection
+		// wait until consumer reconnecting finish
+		time.Sleep(10 * time.Second)
 
 		err = rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"))
 
@@ -186,4 +188,48 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		}
 	})
 
+	t.Run("ShouldPublishSuccessfully_WhenChannelCleanerRun", func(t *testing.T) {
+		// Init
+		maxIdle := 100 * time.Millisecond
+		maxChannel := 20
+		rabbitClient, errClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"),
+			WithConsumerThread(1),
+			WithPubMinChannel(1),
+			WithPubMaxChannel(maxChannel),
+			WithPubChannelPruneInterval(maxIdle/10), //
+			WithPubChannelMaxIdle(maxIdle),
+		)
+		require.NoError(t, errClient)
+
+		topicName := "msgbuzz.channelprune.test"
+		consumerName := "msgbuzz"
+
+		// Code under test
+		rabbitClient.On(topicName, consumerName, func(confirm MessageConfirm, bytes []byte) error {
+			defer confirm.Ack()
+			return nil
+		})
+		go rabbitClient.StartConsuming()
+		defer rabbitClient.Close()
+
+		// wait for exchange and queue to be created
+		time.Sleep(500 * time.Millisecond)
+
+		// Publish to warmup the channel
+		for i := 0; i < maxChannel; i++ {
+			err := rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"))
+			// -- Should publish without error
+			require.NoError(t, err)
+		}
+		// Wait until channel expire and cleanup run
+		fmt.Println("Wait")
+		<-time.After(maxIdle)
+		for i := 0; i < maxChannel*10; i++ {
+			err := rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"))
+			// Expectations
+			// -- Should publish without error
+			require.NoError(t, err)
+		}
+		fmt.Println("Done")
+	})
 }
