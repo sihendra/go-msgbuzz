@@ -4,7 +4,6 @@
 package msgbuzz
 
 import (
-	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -156,7 +155,6 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 			defer func() {
 				require.NoError(t, confirm.Ack())
 			}()
-			t.Logf("Receive message from topic %s", topicName)
 			actualMsgSent <- true
 			require.Equal(t, "Hi from msgbuzz", string(bytes))
 			return nil
@@ -222,14 +220,12 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 			require.NoError(t, err)
 		}
 		// Wait until channel expire and cleanup run
-		fmt.Println("Wait")
 		<-time.After(maxIdle)
-		for i := 0; i < maxChannel*10; i++ {
+		for i := 0; i < maxChannel*100; i++ {
 			err := rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"))
 			// Expectations
 			// -- Should publish without error
 			require.NoError(t, err)
 		}
-		fmt.Println("Done")
 	})
 }
