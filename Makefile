@@ -11,11 +11,11 @@ test-all-no-infra: test-unit test-integration-no-infra
 
 test-unit: dep
 	@echo ">> Running Unit Test"
-	@go test -tags=unit -count=1 -cover -covermode=atomic ./...
+	@go test -tags=unit -count=1 -cover -covermode=atomic -v ./...
 
 test-integration-no-infra: dep
 	@echo ">> Running Integration Test"
-	@env $$(cat .env.testing | xargs) go test -tags=integration -failfast -count=1 -p=1 -cover -covermode=atomic ./...
+	@env $$(cat .env.testing | xargs) go test -tags=integration -failfast -count=1 -p=1 -cover -covermode=atomic -v ./...
 
 test-integration: test-infra-up test-integration-no-infra test-infra-down
 

@@ -30,7 +30,6 @@ func TestRabbitMqMessageConfirm_Retry(t *testing.T) {
 		var actualAttempt int
 		err := mc.On(topicName, consumerName, func(confirm msgbuzz.MessageConfirm, bytes []byte) error {
 			actualAttempt++
-			t.Logf("Attempt: %d", actualAttempt)
 			if shouldRetry := actualAttempt < expectedMaxAttempt; shouldRetry {
 				// CODE UNDER TEST
 				err := confirm.Retry(int64(delaySecond), maxRetry)
@@ -77,7 +76,6 @@ func TestRabbitMqMessageConfirm_Retry(t *testing.T) {
 		var actualAttempt int
 		err := mc.On(topicName, consumerName, func(confirm msgbuzz.MessageConfirm, bytes []byte) error {
 			actualAttempt++
-			t.Logf("Attempt: %d", actualAttempt)
 			if shouldRetry := actualAttempt < expectedMaxAttempt; shouldRetry {
 				// CODE UNDER TEST
 				err := confirm.Retry(int64(delaySecond), maxRetry)

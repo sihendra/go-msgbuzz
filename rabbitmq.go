@@ -24,8 +24,11 @@ type RabbitMqClient struct {
 }
 
 type RabbitConfig struct {
-	ConsumerThread      int
-	PublisherMaxChannel int
+	ConsumerThread                  int
+	PublisherMaxChannel             int
+	PublisherMinChannel             int
+	PublisherChannelMaxIdleTime     time.Duration
+	PublisherChannelCleanupInterval time.Duration
 }
 
 type RabbitOption func(opt *RabbitConfig)
@@ -33,6 +36,24 @@ type RabbitOption func(opt *RabbitConfig)
 func WithPubMaxChannel(maxChannel int) func(opt *RabbitConfig) {
 	return func(cfg *RabbitConfig) {
 		cfg.PublisherMaxChannel = maxChannel
+	}
+}
+
+func WithPubMinChannel(minChannel int) func(opt *RabbitConfig) {
+	return func(cfg *RabbitConfig) {
+		cfg.PublisherMinChannel = minChannel
+	}
+}
+
+func WithPubChannelMaxIdle(maxIdleTime time.Duration) func(opt *RabbitConfig) {
+	return func(cfg *RabbitConfig) {
+		cfg.PublisherChannelMaxIdleTime = maxIdleTime
+	}
+}
+
+func WithPubChannelPruneInterval(pruneInterval time.Duration) func(opt *RabbitConfig) {
+	return func(cfg *RabbitConfig) {
+		cfg.PublisherChannelCleanupInterval = pruneInterval
 	}
 }
 
@@ -61,7 +82,7 @@ func NewRabbitMqClient(connStr string, opt ...RabbitOption) (*RabbitMqClient, er
 		return nil, err
 	}
 
-	pool, errPool := NewChannelPool(cfg.PublisherMaxChannel, fmt.Sprintf("%s/", connStr))
+	pool, errPool := NewChannelPool(fmt.Sprintf("%s/", connStr), cfg)
 	if errPool != nil {
 		return nil, errPool
 	}
@@ -144,14 +165,15 @@ func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc M
 }
 
 func (m *RabbitMqClient) Close() error {
+
+	if m.pubChannelPool != nil {
+		m.pubChannelPool.Close()
+	}
 	if m.conn == nil {
 		return fmt.Errorf("trying to close closed connection")
 	}
 	if m.conn != nil {
 		return m.conn.Close()
-	}
-	if m.pubChannelPool != nil {
-		m.pubChannelPool.Close()
 	}
 	return nil
 }
@@ -165,7 +187,6 @@ func (m *RabbitMqClient) StartConsuming() error {
 			}
 		}
 	}
-
 	m.consumerWg.Wait() // wait until all consumers are closed (due to conn.close, cancel, etc)
 
 	m.rcWg.Wait() // will wait until reconnect complete
@@ -275,7 +296,6 @@ func (m *RabbitMqClient) reconnect() error {
 		}
 
 		if err := m.connectToBroker(); err != nil {
-
 			continue
 		}
 
@@ -295,7 +315,6 @@ func (m *RabbitMqClient) SetRcStepTime(t int64) {
 func consumeLoop(wg *sync.WaitGroup, channel *amqp.Channel, deliveries <-chan amqp.Delivery, handlerFunc MessageHandler, names *QueueNameGenerator) {
 	defer wg.Done()
 	for d := range deliveries {
-
 		if messageExpired(d) {
 
 			err := channel.Nack(d.DeliveryTag, false, false)
@@ -383,7 +402,10 @@ func failOnError(err error, msg string) {
 
 func defaultRabbitConfig() RabbitConfig {
 	return RabbitConfig{
-		ConsumerThread:      4,
-		PublisherMaxChannel: 10,
+		ConsumerThread:                  4,
+		PublisherMaxChannel:             10,
+		PublisherMinChannel:             1,
+		PublisherChannelMaxIdleTime:     5 * time.Minute,
+		PublisherChannelCleanupInterval: 1 * time.Minute,
 	}
 }
