@@ -2,7 +2,7 @@ package msgbuzz
 
 import (
 	"context"
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"sync"
 	"time"
 )

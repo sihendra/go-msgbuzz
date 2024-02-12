@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // RabbitMqClient RabbitMq implementation of MessageBus
@@ -21,6 +21,7 @@ type RabbitMqClient struct {
 	subscribers    []subscriber
 	threadNum      int
 	pubChannelPool *ChannelPool
+	logger         Logger
 }
 
 type RabbitConfig struct {
@@ -29,6 +30,7 @@ type RabbitConfig struct {
 	PublisherMinChannel             int
 	PublisherChannelMaxIdleTime     time.Duration
 	PublisherChannelCleanupInterval time.Duration
+	Logger                          Logger
 }
 
 type RabbitOption func(opt *RabbitConfig)
@@ -60,6 +62,12 @@ func WithPubChannelPruneInterval(pruneInterval time.Duration) func(opt *RabbitCo
 func WithConsumerThread(num int) func(opt *RabbitConfig) {
 	return func(cfg *RabbitConfig) {
 		cfg.ConsumerThread = num
+	}
+}
+
+func WithLogger(logger Logger) func(opt *RabbitConfig) {
+	return func(cfg *RabbitConfig) {
+		cfg.Logger = logger
 	}
 }
 
@@ -253,7 +261,7 @@ type subscriber struct {
 
 func (m *RabbitMqClient) connectToBroker() error {
 	if m.url == "" {
-		return errors.New("cannot initialize connection to broker, connectionString not set. Have you initialized?")
+		return errors.New("connection url was not set")
 	}
 
 	var err error
@@ -407,5 +415,6 @@ func defaultRabbitConfig() RabbitConfig {
 		PublisherMinChannel:             1,
 		PublisherChannelMaxIdleTime:     5 * time.Minute,
 		PublisherChannelCleanupInterval: 1 * time.Minute,
+		Logger:                          NewDefaultLogger(),
 	}
 }
