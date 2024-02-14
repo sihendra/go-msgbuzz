@@ -15,6 +15,7 @@ type ChannelPool struct {
 	mu          sync.Mutex        // Mutex for protecting concurrent access to the connection
 	cleanupDone chan bool
 	config      RabbitConfig
+	logger      Logger
 }
 
 // ChannelInfo represents information about a channel including the last time it was used.
@@ -32,6 +33,11 @@ func NewChannelPool(amqpURI string, config RabbitConfig) (*ChannelPool, error) {
 		idle:        make(chan *ChannelInfo, config.PublisherMaxChannel),
 		cleanupDone: make(chan bool, 1),
 		config:      config,
+	}
+
+	pool.logger = config.Logger
+	if pool.logger == nil {
+		pool.logger = NewDefaultLogger()
 	}
 
 	pool.initConnection(amqpURI)
@@ -53,12 +59,14 @@ func (p *ChannelPool) initConnection(amqpURI string) {
 
 	for i := 0; i < retries; i++ {
 		// Establish an AMQP connection
+		p.logger.Debugf("[rbpool] Connecting #%d", i+1)
 		tmpConn, err := amqp.Dial(amqpURI)
 		if err != nil {
 			time.Sleep(backoff)
 			backoff *= 2 // apply exponential backoff
 			continue
 		}
+		p.logger.Debugf("[rbpool] Connecting success on #%d try", i+1)
 
 		// Connected
 		p.mu.Lock()
@@ -68,10 +76,12 @@ func (p *ChannelPool) initConnection(amqpURI string) {
 		go func() {
 			errClose := <-p.conn.NotifyClose(make(chan *amqp.Error, 1))
 			if errClose != nil {
+				p.logger.Warningf("[rbpool] Connection closed ungracefully, reconnecting: %s\n", errClose.Error())
 				// closed due to exception, not intentional Close()
 				// reconnect
 				p.initConnection(amqpURI)
 			}
+			p.logger.Debugf("[rbpool] Connection closed gracefully\n")
 			// not reconnecting on intentional Close()
 		}()
 		break
@@ -169,9 +179,11 @@ func (p *ChannelPool) Close() {
 	defer p.mu.Unlock()
 
 	// Close cleanup ticker
+	p.logger.Debugf("[rbpool] Closing channel cleanup job\n")
 	p.cleanupDone <- true
 
 	// Close all idle channels
+	p.logger.Debugf("[rbpool] Closing idle channels\n")
 	close(p.idle)
 	for channel := range p.idle {
 		p.Remove(channel.Channel)
@@ -179,6 +191,7 @@ func (p *ChannelPool) Close() {
 
 	// Close the AMQP connection
 	if p.conn != nil {
+		p.logger.Debugf("[rbpool] Closing connection\n")
 		p.conn.Close()
 	}
 }
