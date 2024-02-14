@@ -117,14 +117,14 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Second)
 	defer cancel()
 
-	var errPub error
+	var err error
 
 	ch, err := m.pubChannelPool.Get(ctx) // Get a channel from the pool
 	if err != nil {
 		return fmt.Errorf("error when getting channel: %w", err)
 	}
 	defer func() {
-		if errPub == nil {
+		if err == nil {
 			// return channel to pool
 			m.pubChannelPool.Return(ch)
 			return
@@ -146,7 +146,7 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 	}
 
 	// Publishes a message onto the queue.
-	errPub = ch.Publish(
+	err = ch.Publish(
 		topicName,  // exchange
 		routingKey, // routing key
 		false,      // mandatory
@@ -155,8 +155,8 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 			ContentType: "application/json",
 			Body:        body, // Our JSON body as []byte
 		})
-	if errPub != nil {
-		return fmt.Errorf("error when publishing: %w", errPub)
+	if err != nil {
+		return fmt.Errorf("error when publishing: %w", err)
 	}
 
 	return nil
