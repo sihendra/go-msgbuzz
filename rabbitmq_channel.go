@@ -4,34 +4,42 @@ import (
 	"context"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// ChannelPool represents a pool of AMQP channels.
-type ChannelPool struct {
+// RabbitMqChannelPool represents a pool of AMQP channels.
+type RabbitMqChannelPool struct {
 	sem         chan struct{}     // Semaphore to limit the number of concurrently acquired channels
-	idle        chan *ChannelInfo // Channel for storing idle (unused) channels
+	idle        chan *channelInfo // Channel for storing idle (unused) channels
 	conn        *amqp.Connection  // AMQP connection
 	mu          sync.Mutex        // Mutex for protecting concurrent access to the connection
 	cleanupDone chan bool
 	config      RabbitConfig
+	logger      Logger
+	isClosed    atomic.Bool
 }
 
-// ChannelInfo represents information about a channel including the last time it was used.
-type ChannelInfo struct {
+// channelInfo represents information about a channel including the last time it was used.
+type channelInfo struct {
 	Channel  *amqp.Channel
 	LastUsed time.Time
 }
 
 // NewChannelPool creates a new AMQP channel pool.
-func NewChannelPool(amqpURI string, config RabbitConfig) (*ChannelPool, error) {
+func NewChannelPool(amqpURI string, config RabbitConfig) (*RabbitMqChannelPool, error) {
 
 	// Create a new channel pool with the specified limit
-	pool := &ChannelPool{
+	pool := &RabbitMqChannelPool{
 		sem:         make(chan struct{}, config.PublisherMaxChannel),
-		idle:        make(chan *ChannelInfo, config.PublisherMaxChannel),
+		idle:        make(chan *channelInfo, config.PublisherMaxChannel),
 		cleanupDone: make(chan bool, 1),
 		config:      config,
+	}
+
+	pool.logger = config.Logger
+	if pool.logger == nil {
+		pool.logger = NewDefaultLogger()
 	}
 
 	pool.initConnection(amqpURI)
@@ -42,7 +50,7 @@ func NewChannelPool(amqpURI string, config RabbitConfig) (*ChannelPool, error) {
 	return pool, nil
 }
 
-func (p *ChannelPool) initConnection(amqpURI string) {
+func (p *RabbitMqChannelPool) initConnection(amqpURI string) {
 	if p.conn != nil && !p.conn.IsClosed() {
 		// already connected
 		return
@@ -51,26 +59,32 @@ func (p *ChannelPool) initConnection(amqpURI string) {
 	backoff := time.Second
 	retries := 20 // Adjust this value as needed
 
+	// lock conn during re/connecting
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for i := 0; i < retries; i++ {
 		// Establish an AMQP connection
+		p.logger.Debugf("[rbpool] Connecting #%d", i+1)
 		tmpConn, err := amqp.Dial(amqpURI)
 		if err != nil {
 			time.Sleep(backoff)
 			backoff *= 2 // apply exponential backoff
 			continue
 		}
+		p.logger.Debugf("[rbpool] Connecting success on #%d try", i+1)
 
 		// Connected
-		p.mu.Lock()
 		p.conn = tmpConn
-		p.mu.Unlock()
 		// Add retry mechanism on connection
 		go func() {
 			errClose := <-p.conn.NotifyClose(make(chan *amqp.Error, 1))
 			if errClose != nil {
+				p.logger.Warningf("[rbpool] Connection closed ungracefully, reconnecting: %s\n", errClose.Error())
 				// closed due to exception, not intentional Close()
 				// reconnect
 				p.initConnection(amqpURI)
+			} else {
+				p.logger.Debugf("[rbpool] Connection closed gracefully\n")
 			}
 			// not reconnecting on intentional Close()
 		}()
@@ -79,7 +93,7 @@ func (p *ChannelPool) initConnection(amqpURI string) {
 }
 
 // cleanupIdleChannels will remove inactive channels. Last updated > timeout
-func (p *ChannelPool) cleanupIdleChannels(interval, timeout time.Duration, minChannels int) {
+func (p *RabbitMqChannelPool) cleanupIdleChannels(interval, timeout time.Duration, minChannels int) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -111,7 +125,7 @@ loop:
 }
 
 // Get acquires a channel from the pool.
-func (p *ChannelPool) Get(ctx context.Context) (*amqp.Channel, error) {
+func (p *RabbitMqChannelPool) Get(ctx context.Context) (*amqp.Channel, error) {
 	select {
 	case channel := <-p.idle: // Reuse an idle channel if available
 		return channel.Channel, nil
@@ -122,7 +136,7 @@ func (p *ChannelPool) Get(ctx context.Context) (*amqp.Channel, error) {
 	}
 }
 
-func (p *ChannelPool) createChannel() (*amqp.Channel, error) {
+func (p *RabbitMqChannelPool) createChannel() (*amqp.Channel, error) {
 	p.mu.Lock()
 	channel, err := p.conn.Channel() // Establish a new AMQP channel
 	p.mu.Unlock()
@@ -141,18 +155,20 @@ func (p *ChannelPool) createChannel() (*amqp.Channel, error) {
 }
 
 // Return releases a channel back to the pool.
-func (p *ChannelPool) Return(ch *amqp.Channel) {
+func (p *RabbitMqChannelPool) Return(ch *amqp.Channel) {
 	// Update the LastUsed timestamp before putting the channel back into the idle pool
-	info := &ChannelInfo{Channel: ch, LastUsed: time.Now()}
+	info := &channelInfo{Channel: ch, LastUsed: time.Now()}
 
 	// we use select to avoid blocking when reading on empty channel
-	select {
-	case p.idle <- info:
-	default:
+	if !p.isClosed.Load() {
+		select {
+		case p.idle <- info:
+		default:
+		}
 	}
 }
 
-func (p *ChannelPool) Remove(ch *amqp.Channel) {
+func (p *RabbitMqChannelPool) Remove(ch *amqp.Channel) {
 	_ = ch.Close()
 
 	// we use select to avoid blocking when reading on empty channel
@@ -164,14 +180,24 @@ func (p *ChannelPool) Remove(ch *amqp.Channel) {
 }
 
 // Close closes the AMQP connection and releases resources.
-func (p *ChannelPool) Close() {
+func (p *RabbitMqChannelPool) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	if p.isClosed.Load() {
+		p.logger.Debugf("[rbpool] Skip closing: pool already closed")
+		return
+	}
+
+	// Set close flag to true
+	p.isClosed.Store(true)
+
 	// Close cleanup ticker
+	p.logger.Debugf("[rbpool] Closing channel cleanup job\n")
 	p.cleanupDone <- true
 
 	// Close all idle channels
+	p.logger.Debugf("[rbpool] Closing idle channels\n")
 	close(p.idle)
 	for channel := range p.idle {
 		p.Remove(channel.Channel)
@@ -179,6 +205,7 @@ func (p *ChannelPool) Close() {
 
 	// Close the AMQP connection
 	if p.conn != nil {
+		p.logger.Debugf("[rbpool] Closing connection\n")
 		p.conn.Close()
 	}
 }
