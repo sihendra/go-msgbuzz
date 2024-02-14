@@ -80,8 +80,9 @@ func (p *RabbitMqChannelPool) initConnection(amqpURI string) {
 				// closed due to exception, not intentional Close()
 				// reconnect
 				p.initConnection(amqpURI)
+			} else {
+				p.logger.Debugf("[rbpool] Connection closed gracefully\n")
 			}
-			p.logger.Debugf("[rbpool] Connection closed gracefully\n")
 			// not reconnecting on intentional Close()
 		}()
 		break
