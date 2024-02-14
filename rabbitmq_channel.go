@@ -4,6 +4,7 @@ import (
 	"context"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type RabbitMqChannelPool struct {
 	cleanupDone chan bool
 	config      RabbitConfig
 	logger      Logger
+	isClosed    atomic.Bool
 }
 
 // channelInfo represents information about a channel including the last time it was used.
@@ -157,9 +159,11 @@ func (p *RabbitMqChannelPool) Return(ch *amqp.Channel) {
 	info := &channelInfo{Channel: ch, LastUsed: time.Now()}
 
 	// we use select to avoid blocking when reading on empty channel
-	select {
-	case p.idle <- info:
-	default:
+	if !p.isClosed.Load() {
+		select {
+		case p.idle <- info:
+		default:
+		}
 	}
 }
 
@@ -178,6 +182,14 @@ func (p *RabbitMqChannelPool) Remove(ch *amqp.Channel) {
 func (p *RabbitMqChannelPool) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	if p.isClosed.Load() {
+		p.logger.Debugf("[rbpool] Skip closing: pool already closed")
+		return
+	}
+
+	// Set close flag to true
+	p.isClosed.Store(true)
 
 	// Close cleanup ticker
 	p.logger.Debugf("[rbpool] Closing channel cleanup job\n")
