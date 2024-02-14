@@ -20,7 +20,7 @@ type RabbitMqClient struct {
 	rcStepTime     int64
 	subscribers    []subscriber
 	threadNum      int
-	pubChannelPool *ChannelPool
+	pubChannelPool *RabbitMqChannelPool
 	logger         Logger
 }
 

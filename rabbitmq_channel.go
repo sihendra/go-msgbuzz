@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// ChannelPool represents a pool of AMQP channels.
-type ChannelPool struct {
+// RabbitMqChannelPool represents a pool of AMQP channels.
+type RabbitMqChannelPool struct {
 	sem         chan struct{}     // Semaphore to limit the number of concurrently acquired channels
-	idle        chan *ChannelInfo // Channel for storing idle (unused) channels
+	idle        chan *channelInfo // Channel for storing idle (unused) channels
 	conn        *amqp.Connection  // AMQP connection
 	mu          sync.Mutex        // Mutex for protecting concurrent access to the connection
 	cleanupDone chan bool
@@ -18,19 +18,19 @@ type ChannelPool struct {
 	logger      Logger
 }
 
-// ChannelInfo represents information about a channel including the last time it was used.
-type ChannelInfo struct {
+// channelInfo represents information about a channel including the last time it was used.
+type channelInfo struct {
 	Channel  *amqp.Channel
 	LastUsed time.Time
 }
 
 // NewChannelPool creates a new AMQP channel pool.
-func NewChannelPool(amqpURI string, config RabbitConfig) (*ChannelPool, error) {
+func NewChannelPool(amqpURI string, config RabbitConfig) (*RabbitMqChannelPool, error) {
 
 	// Create a new channel pool with the specified limit
-	pool := &ChannelPool{
+	pool := &RabbitMqChannelPool{
 		sem:         make(chan struct{}, config.PublisherMaxChannel),
-		idle:        make(chan *ChannelInfo, config.PublisherMaxChannel),
+		idle:        make(chan *channelInfo, config.PublisherMaxChannel),
 		cleanupDone: make(chan bool, 1),
 		config:      config,
 	}
@@ -48,7 +48,7 @@ func NewChannelPool(amqpURI string, config RabbitConfig) (*ChannelPool, error) {
 	return pool, nil
 }
 
-func (p *ChannelPool) initConnection(amqpURI string) {
+func (p *RabbitMqChannelPool) initConnection(amqpURI string) {
 	if p.conn != nil && !p.conn.IsClosed() {
 		// already connected
 		return
@@ -89,7 +89,7 @@ func (p *ChannelPool) initConnection(amqpURI string) {
 }
 
 // cleanupIdleChannels will remove inactive channels. Last updated > timeout
-func (p *ChannelPool) cleanupIdleChannels(interval, timeout time.Duration, minChannels int) {
+func (p *RabbitMqChannelPool) cleanupIdleChannels(interval, timeout time.Duration, minChannels int) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -121,7 +121,7 @@ loop:
 }
 
 // Get acquires a channel from the pool.
-func (p *ChannelPool) Get(ctx context.Context) (*amqp.Channel, error) {
+func (p *RabbitMqChannelPool) Get(ctx context.Context) (*amqp.Channel, error) {
 	select {
 	case channel := <-p.idle: // Reuse an idle channel if available
 		return channel.Channel, nil
@@ -132,7 +132,7 @@ func (p *ChannelPool) Get(ctx context.Context) (*amqp.Channel, error) {
 	}
 }
 
-func (p *ChannelPool) createChannel() (*amqp.Channel, error) {
+func (p *RabbitMqChannelPool) createChannel() (*amqp.Channel, error) {
 	p.mu.Lock()
 	channel, err := p.conn.Channel() // Establish a new AMQP channel
 	p.mu.Unlock()
@@ -151,9 +151,9 @@ func (p *ChannelPool) createChannel() (*amqp.Channel, error) {
 }
 
 // Return releases a channel back to the pool.
-func (p *ChannelPool) Return(ch *amqp.Channel) {
+func (p *RabbitMqChannelPool) Return(ch *amqp.Channel) {
 	// Update the LastUsed timestamp before putting the channel back into the idle pool
-	info := &ChannelInfo{Channel: ch, LastUsed: time.Now()}
+	info := &channelInfo{Channel: ch, LastUsed: time.Now()}
 
 	// we use select to avoid blocking when reading on empty channel
 	select {
@@ -162,7 +162,7 @@ func (p *ChannelPool) Return(ch *amqp.Channel) {
 	}
 }
 
-func (p *ChannelPool) Remove(ch *amqp.Channel) {
+func (p *RabbitMqChannelPool) Remove(ch *amqp.Channel) {
 	_ = ch.Close()
 
 	// we use select to avoid blocking when reading on empty channel
@@ -174,7 +174,7 @@ func (p *ChannelPool) Remove(ch *amqp.Channel) {
 }
 
 // Close closes the AMQP connection and releases resources.
-func (p *ChannelPool) Close() {
+func (p *RabbitMqChannelPool) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
