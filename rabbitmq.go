@@ -82,6 +82,10 @@ func NewRabbitMqClient(connStr string, opt ...RabbitOption) (*RabbitMqClient, er
 		url:       connStr,
 		threadNum: cfg.ConsumerThread,
 	}
+	mc.logger = cfg.Logger
+	if mc.logger == nil {
+		mc.logger = NewDefaultLogger()
+	}
 
 	// set default rcStepTime
 	mc.rcStepTime = 10
@@ -126,10 +130,12 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 	defer func() {
 		if err == nil {
 			// return channel to pool
+			m.logger.Debug("Returning channel to pool")
 			m.pubChannelPool.Return(ch)
 			return
 		}
 		// don't return error channel to pool, it will be automatically closed and recreated
+		m.logger.Debugf("Not returning channel to pool: error occured: %s\n", err.Error())
 	}()
 
 	err = ch.ExchangeDeclare(
