@@ -59,6 +59,9 @@ func (p *RabbitMqChannelPool) initConnection(amqpURI string) {
 	backoff := time.Second
 	retries := 20 // Adjust this value as needed
 
+	// lock conn during re/connecting
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for i := 0; i < retries; i++ {
 		// Establish an AMQP connection
 		p.logger.Debugf("[rbpool] Connecting #%d", i+1)
@@ -71,9 +74,7 @@ func (p *RabbitMqChannelPool) initConnection(amqpURI string) {
 		p.logger.Debugf("[rbpool] Connecting success on #%d try", i+1)
 
 		// Connected
-		p.mu.Lock()
 		p.conn = tmpConn
-		p.mu.Unlock()
 		// Add retry mechanism on connection
 		go func() {
 			errClose := <-p.conn.NotifyClose(make(chan *amqp.Error, 1))
