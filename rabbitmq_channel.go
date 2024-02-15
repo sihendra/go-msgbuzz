@@ -125,13 +125,19 @@ loop:
 
 // Get acquires a channel from the pool.
 func (p *RabbitMqChannelPool) Get(ctx context.Context) (*amqp.Channel, error) {
-	select {
-	case channel := <-p.idle: // Reuse an idle channel if available
-		return channel.Channel, nil
-	case p.sem <- struct{}{}: // Get a semaphore token and add new channel
-		return p.createChannel()
-	case <-ctx.Done(): // Return an error if the context is canceled
-		return nil, ctx.Err()
+	for {
+		select {
+		case channel := <-p.idle: // Reuse an idle channel if available
+			if channel.Channel.IsClosed() {
+				p.Remove(channel.Channel)
+				break
+			}
+			return channel.Channel, nil
+		case p.sem <- struct{}{}: // Get a semaphore token and add new channel
+			return p.createChannel()
+		case <-ctx.Done(): // Return an error if the context is canceled
+			return nil, ctx.Err()
+		}
 	}
 }
 
