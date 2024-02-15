@@ -35,11 +35,10 @@ func NewChannelPool(amqpURI string, config RabbitConfig) (*RabbitMqChannelPool, 
 		idle:        make(chan *channelInfo, config.PublisherMaxChannel),
 		cleanupDone: make(chan bool, 1),
 		config:      config,
+		logger:      config.Logger,
 	}
-
-	pool.logger = config.Logger
 	if pool.logger == nil {
-		pool.logger = NewDefaultLogger()
+		pool.logger = NewNoOpLogger()
 	}
 
 	pool.initConnection(amqpURI)

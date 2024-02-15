@@ -146,7 +146,6 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 		rabbitClient, errClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), WithConsumerThread(1))
 		require.NoError(t, errClient)
 
-		rabbitClient.SetRcStepTime(1)
 		topicName := "msgbuzz.reconnect.test"
 		consumerName := "msgbuzz"
 		actualMsgSent := make(chan bool)
@@ -168,7 +167,7 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 
 		// RESTART WILL TRIGGER consumer and publisher reconnection
 		// wait until consumer reconnecting finish
-		time.Sleep(10 * time.Second)
+		time.Sleep(8 * time.Second)
 
 		err = rabbitClient.Publish(topicName, []byte("Hi from msgbuzz"))
 

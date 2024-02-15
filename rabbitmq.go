@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -16,12 +17,12 @@ type RabbitMqClient struct {
 	conn           *amqp.Connection
 	url            string
 	consumerWg     sync.WaitGroup
-	rcWg           sync.WaitGroup
-	rcStepTime     int64
 	subscribers    []subscriber
 	threadNum      int
 	pubChannelPool *RabbitMqChannelPool
 	logger         Logger
+	isClosed       atomic.Bool
+	connMutex      sync.Mutex
 }
 
 type RabbitConfig struct {
@@ -81,14 +82,11 @@ func NewRabbitMqClient(connStr string, opt ...RabbitOption) (*RabbitMqClient, er
 	mc := &RabbitMqClient{
 		url:       connStr,
 		threadNum: cfg.ConsumerThread,
+		logger:    cfg.Logger,
 	}
-	mc.logger = cfg.Logger
 	if mc.logger == nil {
-		mc.logger = NewDefaultLogger()
+		mc.logger = NewNoOpLogger()
 	}
-
-	// set default rcStepTime
-	mc.rcStepTime = 10
 
 	if err := mc.connectToBroker(); err != nil {
 		return nil, err
@@ -180,6 +178,8 @@ func (m *RabbitMqClient) On(topicName string, consumerName string, handlerFunc M
 
 func (m *RabbitMqClient) Close() error {
 
+	m.isClosed.Store(true)
+
 	if m.pubChannelPool != nil {
 		m.pubChannelPool.Close()
 	}
@@ -193,55 +193,85 @@ func (m *RabbitMqClient) Close() error {
 }
 
 func (m *RabbitMqClient) StartConsuming() error {
-	for _, sub := range m.subscribers {
-		for i := 0; i < m.threadNum; i++ {
-			err := m.consume(sub.topicName, sub.consumerName, sub.messageHandler)
-			if err != nil {
-				return err
+	for !m.isClosed.Load() {
+	subLoop:
+		for _, sub := range m.subscribers {
+			for i := 0; i < m.threadNum; i++ {
+				err := m.consume(sub.topicName, sub.consumerName, sub.messageHandler)
+				if err != nil {
+					m.logger.Warningf("error when registring consumer: %s", err.Error())
+					break subLoop
+				}
+				m.logger.Debug("Registering success")
 			}
 		}
+		m.consumerWg.Wait() // wait until all consumers are closed (due to conn.close, cancel, etc)
+		time.Sleep(1 * time.Second)
 	}
-	m.consumerWg.Wait() // wait until all consumers are closed (due to conn.close, cancel, etc)
 
-	m.rcWg.Wait() // will wait until reconnect complete
+	//m.rcWg.Wait() // will wait until reconnect complete
 
 	return nil
 }
 
 func (m *RabbitMqClient) consume(topicName string, consumerName string, handlerFunc MessageHandler) error {
+	m.connMutex.Lock()
 	ch, err := m.conn.Channel()
-	failOnError(err, "Failed to open a channel")
+	m.connMutex.Unlock()
+	if err != nil {
+		return fmt.Errorf("failed opening a channel: %w", err)
+	}
 
 	err = ch.Qos(1, 0, false)
-	failOnError(err, "Failed setting qos prefetch to 1")
+	if err != nil {
+		return fmt.Errorf("failed setting qos prefetch to 1: %w", err)
+	}
 
 	names := NewQueueNameGenerator(topicName, consumerName)
 	// create dlx exchange and queue
 	err = ch.ExchangeDeclare(names.DlxExchange(), "direct", true, false, false, false, nil)
-	failOnError(err, "Failed declaring dlx exchange")
+	if err != nil {
+		return fmt.Errorf("failed declaring dlx exchange: %w", err)
+	}
 	_, err = ch.QueueDeclare(names.DlxQueue(), true, false, false, false, nil)
-	failOnError(err, "Failed declaring dlx queue")
+	if err != nil {
+		return fmt.Errorf("failed declaring dlx queue: %w", err)
+	}
 	err = ch.QueueBind(names.DlxQueue(), names.DlxQueue(), names.DlxExchange(), false, nil)
-	failOnError(err, "Failed binding dlx exchange and queue")
+	if err != nil {
+		return fmt.Errorf("failed binding dlx exchange and queue: %w", err)
+	}
 
 	// create exchange for pub/sub
 	err = ch.ExchangeDeclare(names.Exchange(), "fanout", true, false, false, false, nil)
-	failOnError(err, "Failed declaring pub/sub exchange")
+	if err != nil {
+		return fmt.Errorf("failed declaring pub/sub exchange: %w", err)
+	}
 	// create dedicated queue for receiving message (create subscriber)
 	_, err = ch.QueueDeclare(names.Queue(), true, false, false, false, amqp.Table{"x-dead-letter-exchange": names.DlxExchange(), "x-dead-letter-routing-key": names.DlxQueue()})
-	failOnError(err, "Failed declaring pub/sub queue")
+	if err != nil {
+		return fmt.Errorf("failed declaring pub/sub queue: %w", err)
+	}
 	// bind created queue with pub/sub exchange
 	err = ch.QueueBind(names.Queue(), names.Queue(), names.Exchange(), false, nil)
-	failOnError(err, "Failed binding pub/sub exchange and queue")
+	if err != nil {
+		return fmt.Errorf("failed binding pub/sub exchange and queue: %w", err)
+	}
 
 	// setup retry requeue exchange and binding
 	err = ch.ExchangeDeclare(names.RetryExchange(), "direct", true, false, false, false, nil)
-	failOnError(err, "Failed declaring retry exchange")
+	if err != nil {
+		return fmt.Errorf("failed declaring retry exchange: %w", err)
+	}
 	err = ch.QueueBind(names.Queue(), names.Queue(), names.RetryExchange(), false, nil)
-	failOnError(err, "Failed binding retry exchange and queue")
+	if err != nil {
+		return fmt.Errorf("failed binding retry exchange and queue: %w", err)
+	}
 	// create retry queue
 	_, err = ch.QueueDeclare(names.RetryQueue(), true, false, false, false, amqp.Table{"x-dead-letter-exchange": names.RetryExchange(), "x-dead-letter-routing-key": names.Queue()})
-	failOnError(err, "Failed creating retry queue")
+	if err != nil {
+		return fmt.Errorf("failed creating retry queue: %w", err)
+	}
 
 	deliveries, err := ch.Consume(
 		names.Queue(), // queue
@@ -252,7 +282,9 @@ func (m *RabbitMqClient) consume(topicName string, consumerName string, handlerF
 		false,         // no-wait
 		nil,           // args
 	)
-	failOnError(err, "Failed to register a consumer")
+	if err != nil {
+		return fmt.Errorf("failed to register a consumer: %w", err)
+	}
 
 	m.consumerWg.Add(1)
 	go consumeLoop(&m.consumerWg, ch, deliveries, handlerFunc, names)
@@ -270,14 +302,19 @@ func (m *RabbitMqClient) connectToBroker() error {
 		return errors.New("connection url was not set")
 	}
 
+	m.logger.Debugf("[rbconsumer] Connecting")
+
 	var err error
+	m.connMutex.Lock()
 	m.conn, err = amqp.Dial(fmt.Sprintf("%s/", m.url))
+	m.connMutex.Unlock()
 	if err != nil {
 		return errors.New("failed to connect to AMQP compatible broker at: " + m.url + err.Error())
 	}
 
+	m.logger.Debugf("[rbconsumer] Connecting Success")
+
 	// spin up listener for connection error
-	m.rcWg.Add(1)
 	go func() {
 
 		// NOTE: If connection is closed by application (i.e. msgBus.Close())
@@ -286,13 +323,13 @@ func (m *RabbitMqClient) connectToBroker() error {
 		notifyCloseErr := <-m.conn.NotifyClose(make(chan *amqp.Error))
 
 		if notifyCloseErr != nil {
+			m.logger.Warningf("[rbconsumer] Connection closed ungracefully: %s", notifyCloseErr.Error())
 			if err := m.reconnect(); err != nil {
 				panic(err)
 			}
 			return
 		}
-
-		m.rcWg.Done()
+		m.logger.Debugf("[rbconsumer] Connection closed gracefully")
 	}()
 
 	return nil
@@ -301,29 +338,27 @@ func (m *RabbitMqClient) connectToBroker() error {
 func (m *RabbitMqClient) reconnect() error {
 
 	var currentRcAttempt int
+	backoff := time.Second
 	for {
 		currentRcAttempt++
 		// Sleep between attempts of reconnecting to avoid consecutive errors
 		if currentRcAttempt > 1 {
-			step := time.Duration(int64(currentRcAttempt-1)*m.rcStepTime) * time.Second
-			time.Sleep(step)
+			backoff = backoff * 2
+			time.Sleep(backoff)
 		}
 
 		if err := m.connectToBroker(); err != nil {
 			continue
 		}
 
-		if err := m.StartConsuming(); err != nil {
-
-			continue
-		}
-
-		return nil
+		break
 	}
-}
+	//
+	//if err := m.StartConsuming(); err != nil {
+	//	m.logger.Warningf("error start consuming: %s", err.Error())
+	//}
 
-func (m *RabbitMqClient) SetRcStepTime(t int64) {
-	m.rcStepTime = t
+	return nil
 }
 
 func consumeLoop(wg *sync.WaitGroup, channel *amqp.Channel, deliveries <-chan amqp.Delivery, handlerFunc MessageHandler, names *QueueNameGenerator) {
@@ -407,13 +442,6 @@ func getTotalFailed(delivery amqp.Delivery) (int64, error) {
 	return countInt64, nil
 }
 
-func failOnError(err error, msg string) {
-	if err != nil {
-
-		panic(fmt.Sprintf("%s: %s", msg, err))
-	}
-}
-
 func defaultRabbitConfig() RabbitConfig {
 	return RabbitConfig{
 		ConsumerThread:                  4,
@@ -421,6 +449,6 @@ func defaultRabbitConfig() RabbitConfig {
 		PublisherMinChannel:             1,
 		PublisherChannelMaxIdleTime:     5 * time.Minute,
 		PublisherChannelCleanupInterval: 1 * time.Minute,
-		Logger:                          NewDefaultLogger(),
+		Logger:                          NewNoOpLogger(),
 	}
 }
