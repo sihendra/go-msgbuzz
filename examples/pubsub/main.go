@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"github.com/sihendra/go-msgbuzz"
+	"log"
+	"math/rand"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,7 +13,10 @@ import (
 
 func main() {
 	// Create msgbuzz instance
-	msgBus, err := msgbuzz.NewRabbitMqClient("amqp://127.0.0.1:5672", msgbuzz.WithPubMaxChannel(100))
+	msgBus, err := msgbuzz.NewRabbitMqClient("amqp://127.0.0.1:5672",
+		msgbuzz.WithPubMaxChannel(3),
+		msgbuzz.WithLogger(msgbuzz.NewNoOpLogger()),
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -19,7 +24,7 @@ func main() {
 	// Register consumer of some topic
 	msgBus.On("profile.created", "reco_engine", func(confirm msgbuzz.MessageConfirm, bytes []byte) error {
 		defer confirm.Ack()
-		fmt.Printf("Incoming message: %s", string(bytes))
+		fmt.Printf("Incoming message: %s\n", string(bytes))
 
 		return nil
 	})
@@ -38,9 +43,20 @@ func main() {
 		// Wait consumer start, if no consumer no message will be saved by rabbitmq
 		time.Sleep(time.Second * 1)
 
-		for i := 0; i < 100 && !shutDown; i++ {
-			// Publish to topic
-			msgBus.Publish("profile.created", []byte(`
+	loop:
+		for {
+			randMs := time.Duration(rand.Intn(4000)+1000) * time.Millisecond
+			log.Printf("Publishing after: %s\n", randMs)
+			select {
+			case <-time.After(randMs):
+				if shutDown {
+					break loop
+				}
+			}
+
+			for i := 0; i < 5 && !shutDown; i++ {
+				// Publish to topic
+				err := msgBus.Publish("profile.created", []byte(`
 			{
 				"name":"Dodo",
 				"locatoin":"Indonesia",
@@ -48,11 +64,15 @@ func main() {
 					"title":"Software Engineer"
 				}
 			}`))
+				if err != nil {
+					log.Printf("Publish error: %s\n", err.Error())
+				}
+			}
+
 		}
 
 		// Wait for consumer picking the message before stopping
 		time.Sleep(time.Second * 1)
-		msgBus.Close()
 	}(msgBus)
 
 	// Will block until msgbuzz closed
