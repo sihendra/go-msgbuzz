@@ -2,6 +2,7 @@ package msgbuzz
 
 import (
 	"context"
+	"errors"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"sync"
 	"sync/atomic"
@@ -128,6 +129,14 @@ func (p *RabbitMqChannelPool) Get(ctx context.Context) (*amqp.Channel, error) {
 	for {
 		select {
 		case channel := <-p.idle: // Reuse an idle channel if available
+			if channel == nil {
+				// idle channel closed, the pool is being closed, just return
+				return nil, errors.New("no channel available: idle channel was closed")
+			}
+			if channel.Channel == nil {
+				// idle channel closed, the pool is being closed, just return
+				return nil, errors.New("no channel available: nil channel")
+			}
 			if channel.Channel.IsClosed() {
 				p.Remove(channel.Channel)
 				break

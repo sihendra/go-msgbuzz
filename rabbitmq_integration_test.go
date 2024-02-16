@@ -4,6 +4,7 @@
 package msgbuzz
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -227,4 +228,85 @@ func TestRabbitMqClient_Publish(t *testing.T) {
 			require.NoError(t, err)
 		}
 	})
+}
+
+func TestRabbitMqClient_PublishWithContext(t *testing.T) {
+
+	t.Run("ShouldPublishMessageToTopic", func(t *testing.T) {
+		// Init
+		rabbitClient, errClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"), WithConsumerThread(1))
+		require.NoError(t, errClient)
+		testTopicName := "msgbuzz.pubtest"
+		actualMsgReceivedChan := make(chan []byte)
+
+		// -- listen topic to check published message
+		rabbitClient.On(testTopicName, "msgbuzz", func(confirm MessageConfirm, bytes []byte) error {
+			actualMsgReceivedChan <- bytes
+			return confirm.Ack()
+		})
+		go rabbitClient.StartConsuming()
+		defer rabbitClient.Close()
+
+		// -- wait for exchange and queue to be created
+		time.Sleep(1 * time.Second)
+
+		// Code under test
+		sentMessage := []byte("some msg from msgbuzz")
+		err := rabbitClient.PublishWithContext(context.Background(), testTopicName, sentMessage)
+
+		// Expectations
+		// -- ShouldPublishMessageToTopic
+		require.NoError(t, err)
+
+		// -- Should receive correct msg
+		waitSec := 20
+		select {
+		case <-time.After(time.Duration(waitSec) * time.Second):
+			t.Fatalf("Not receiving msg after %d seconds", waitSec)
+		case actualMessageReceived := <-actualMsgReceivedChan:
+			require.Equal(t, sentMessage, actualMessageReceived)
+		}
+	})
+
+	t.Run("ShouldTimeout_WhenGivenContextWithTimeoutAndConnectingTimeout", func(t *testing.T) {
+		// Init
+		// Create rabbitmq client, this WILL CREATE CONNECTION for consumer and publisher
+		rabbitClient, errClient := NewRabbitMqClient(os.Getenv("RABBITMQ_URL"),
+			WithConsumerThread(1),
+			// -- WhenGivenContextWithTimeoutAndConnectingTimeout
+			// this will create no publisher, thus timeout when timeout exceeded
+			WithPubMinChannel(0),
+			WithPubMaxChannel(0))
+		require.NoError(t, errClient)
+
+		topicName := "msgbuzz.reconnect.test"
+		consumerName := "msgbuzz"
+		actualMsgSent := make(chan bool)
+
+		rabbitClient.On(topicName, consumerName, func(confirm MessageConfirm, bytes []byte) error {
+			defer func() {
+				require.NoError(t, confirm.Ack())
+			}()
+			actualMsgSent <- true
+			require.Equal(t, "Hi from msgbuzz", string(bytes))
+			return nil
+		})
+		go rabbitClient.StartConsuming()
+		defer rabbitClient.Close()
+
+		// restart RabbitMQ dummy server
+		//err = stopRabbitMqServer()
+		//require.NoError(t, err)
+
+		// Publish on closed rabbitmq
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*100)
+		defer cancel()
+		err := rabbitClient.PublishWithContext(ctx, topicName, []byte("Hi from msgbuzz"))
+
+		// Expectations
+		// -- Should timeout
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	})
+
 }

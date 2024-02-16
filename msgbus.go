@@ -1,7 +1,10 @@
 package msgbuzz
 
+import "context"
+
 type MessageBus interface {
 	Publish(topicName string, msg []byte, options ...func(*MessageBusOption)) error
+	PublishWithContext(ctx context.Context, topicName string, msg []byte, options ...func(*MessageBusOption)) error
 	On(topicName string, consumerName string, handlerFunc MessageHandler) error
 }
 

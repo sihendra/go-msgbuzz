@@ -15,7 +15,7 @@ func main() {
 	// Create msgbuzz instance
 	msgBus, err := msgbuzz.NewRabbitMqClient("amqp://127.0.0.1:5672",
 		msgbuzz.WithPubMaxChannel(3),
-		msgbuzz.WithLogger(msgbuzz.NewNoOpLogger()),
+		msgbuzz.WithLogger(msgbuzz.NewDefaultLogger(msgbuzz.Info)),
 	)
 	if err != nil {
 		panic(err)
@@ -54,25 +54,24 @@ func main() {
 				}
 			}
 
-			for i := 0; i < 5 && !shutDown; i++ {
-				// Publish to topic
-				err := msgBus.Publish("profile.created", []byte(`
+			go func() {
+				for i := 0; i < 5 && !shutDown; i++ {
+					// Publish to topic
+					err := msgBus.Publish("profile.created", []byte(`
 			{
 				"name":"Dodo",
-				"locatoin":"Indonesia",
+				"location":"Indonesia",
 				"experiences":{
 					"title":"Software Engineer"
 				}
 			}`))
-				if err != nil {
-					log.Printf("Publish error: %s\n", err.Error())
+					if err != nil {
+						log.Printf("Publish error: %s\n", err.Error())
+					}
 				}
-			}
+			}()
 
 		}
-
-		// Wait for consumer picking the message before stopping
-		time.Sleep(time.Second * 1)
 	}(msgBus)
 
 	// Will block until msgbuzz closed
