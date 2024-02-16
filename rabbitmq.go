@@ -128,12 +128,12 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 	defer func() {
 		if err == nil {
 			// return channel to pool
-			m.logger.Debug("Returning channel to pool")
+			m.logger.Debug("[rbconsumer] Returning channel to pool")
 			m.pubChannelPool.Return(ch)
 			return
 		}
 		// don't return error channel to pool, it will be automatically closed and recreated
-		m.logger.Debugf("Not returning channel to pool: error occured: %s\n", err.Error())
+		m.logger.Debugf("[rbconsumer] Not returning channel to pool: error occured: %s", err.Error())
 	}()
 
 	err = ch.ExchangeDeclare(
@@ -199,23 +199,25 @@ func (m *RabbitMqClient) StartConsuming() error {
 			for i := 0; i < m.threadNum; i++ {
 				err := m.consume(sub.topicName, sub.consumerName, sub.messageHandler)
 				if err != nil {
-					m.logger.Warningf("error when registring consumer: %s", err.Error())
+					m.logger.Warningf("[rbconsumer] Error when registring consumer: %s", err.Error())
 					break subLoop
 				}
-				m.logger.Debug("Registering success")
+				m.logger.Debugf("[rbconsumer] Registering handlers #%d for %s (%s) success", i+1, sub.topicName, sub.consumerName)
 			}
 		}
 		m.consumerWg.Wait() // wait until all consumers are closed (due to conn.close, cancel, etc)
 		time.Sleep(1 * time.Second)
 	}
 
-	//m.rcWg.Wait() // will wait until reconnect complete
-
 	return nil
 }
 
 func (m *RabbitMqClient) consume(topicName string, consumerName string, handlerFunc MessageHandler) error {
 	m.connMutex.Lock()
+	if m.conn == nil || m.conn.IsClosed() {
+		m.connMutex.Unlock()
+		return errors.New("nil or closed connection")
+	}
 	ch, err := m.conn.Channel()
 	m.connMutex.Unlock()
 	if err != nil {
@@ -302,61 +304,47 @@ func (m *RabbitMqClient) connectToBroker() error {
 		return errors.New("connection url was not set")
 	}
 
-	m.logger.Debugf("[rbconsumer] Connecting")
-
-	var err error
-	m.connMutex.Lock()
-	m.conn, err = amqp.Dial(fmt.Sprintf("%s/", m.url))
-	m.connMutex.Unlock()
-	if err != nil {
-		return errors.New("failed to connect to AMQP compatible broker at: " + m.url + err.Error())
-	}
-
-	m.logger.Debugf("[rbconsumer] Connecting Success")
-
-	// spin up listener for connection error
-	go func() {
-
-		// NOTE: If connection is closed by application (i.e. msgBus.Close())
-		// we will receive nil value of notifyCloseErr.
-		// https://stackoverflow.com/questions/41991926/how-to-detect-dead-rabbitmq-connection#comment76716804_41992811
-		notifyCloseErr := <-m.conn.NotifyClose(make(chan *amqp.Error))
-
-		if notifyCloseErr != nil {
-			m.logger.Warningf("[rbconsumer] Connection closed ungracefully: %s", notifyCloseErr.Error())
-			if err := m.reconnect(); err != nil {
-				panic(err)
-			}
-			return
-		}
-		m.logger.Debugf("[rbconsumer] Connection closed gracefully")
-	}()
-
-	return nil
-}
-
-func (m *RabbitMqClient) reconnect() error {
-
 	var currentRcAttempt int
 	backoff := time.Second
+	m.connMutex.Lock()
+	defer m.connMutex.Unlock()
 	for {
 		currentRcAttempt++
-		// Sleep between attempts of reconnecting to avoid consecutive errors
-		if currentRcAttempt > 1 {
+
+		// Connecting
+		m.logger.Debugf("[rbconsumer] Connecting #%d", currentRcAttempt)
+		var err error
+		conn, err := amqp.Dial(fmt.Sprintf("%s/", m.url))
+		if err != nil {
+			m.logger.Warningf("[rbconsumer] Failed to connect to %s: %s, will retry after %v", m.url, err.Error(), backoff)
 			backoff = backoff * 2
 			time.Sleep(backoff)
-		}
-
-		if err := m.connectToBroker(); err != nil {
 			continue
 		}
+		// Set active connection
+		m.conn = conn
+		m.logger.Debugf("[rbconsumer] Connecting success on #%d try", currentRcAttempt)
+
+		// spin up listener for connection error
+		go func() {
+
+			// NOTE: If connection is closed by application (i.e. msgBus.Close())
+			// we will receive nil value of notifyCloseErr.
+			// https://stackoverflow.com/questions/41991926/how-to-detect-dead-rabbitmq-connection#comment76716804_41992811
+			notifyCloseErr := <-m.conn.NotifyClose(make(chan *amqp.Error))
+
+			if notifyCloseErr != nil {
+				m.logger.Warningf("[rbconsumer] Connection closed ungracefully: %s", notifyCloseErr.Error())
+				if err := m.connectToBroker(); err != nil {
+					panic(err)
+				}
+				return
+			}
+			m.logger.Debugf("[rbconsumer] Connection closed gracefully")
+		}()
 
 		break
 	}
-	//
-	//if err := m.StartConsuming(); err != nil {
-	//	m.logger.Warningf("error start consuming: %s", err.Error())
-	//}
 
 	return nil
 }
