@@ -83,7 +83,7 @@ func (d *DefaultLogger) Debug(message string) {
 	if d == nil {
 		return
 	}
-	if d.LogLevel >= Debug {
+	if d.LogLevel <= Debug {
 		d.print(message)
 	}
 }
@@ -92,7 +92,7 @@ func (d *DefaultLogger) Debugf(format string, args ...interface{}) {
 	if d == nil {
 		return
 	}
-	if d.LogLevel >= Debug {
+	if d.LogLevel <= Debug {
 		d.printf(format, args...)
 	}
 }
@@ -101,7 +101,7 @@ func (d *DefaultLogger) Info(message string) {
 	if d == nil {
 		return
 	}
-	if d.LogLevel >= Info {
+	if d.LogLevel <= Info {
 		d.print(message)
 	}
 }
@@ -110,7 +110,7 @@ func (d *DefaultLogger) Infof(format string, args ...interface{}) {
 	if d == nil {
 		return
 	}
-	if d.LogLevel >= Info {
+	if d.LogLevel <= Info {
 		d.printf(format, args...)
 	}
 }
@@ -119,7 +119,7 @@ func (d *DefaultLogger) Warning(message string) {
 	if d == nil {
 		return
 	}
-	if d.LogLevel >= Warning {
+	if d.LogLevel <= Warning {
 		d.print(message)
 	}
 }
@@ -128,7 +128,7 @@ func (d *DefaultLogger) Warningf(format string, args ...interface{}) {
 	if d == nil {
 		return
 	}
-	if d.LogLevel >= Warning {
+	if d.LogLevel <= Warning {
 		d.printf(format, args...)
 	}
 }
@@ -137,7 +137,7 @@ func (d *DefaultLogger) Error(message string) {
 	if d == nil {
 		return
 	}
-	if d.LogLevel >= Error {
+	if d.LogLevel <= Error {
 		d.print(message)
 	}
 }
@@ -146,7 +146,7 @@ func (d *DefaultLogger) Errorf(format string, args ...interface{}) {
 	if d == nil {
 		return
 	}
-	if d.LogLevel >= Error {
+	if d.LogLevel <= Error {
 		d.printf(format, args...)
 	}
 }
