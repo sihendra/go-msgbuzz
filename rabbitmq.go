@@ -108,11 +108,22 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(
 	}
 
 	err := m.publishMessageToExchange(topicName, body, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
-	if err == nil {
-		return nil
+	if err != nil {
+		var amqpErr *amqp.Error
+		if ok := errors.As(err, &amqpErr); ok {
+			if amqpErr.Recover {
+				m.logger.Debugf("[rbpublisher] Error is recoverable: %v, retrying", amqpErr)
+				// Retryable
+				return m.publishMessageToExchange(topicName, body, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
+			}
+			m.logger.Warningf("[rbpublisher] Error is unrecoverable: %v", amqpErr)
+			return err
+		}
+		m.logger.Errorf("[rbpublisher] Non amqp error: %v", err)
+		return err
 	}
 
-	return err
+	return nil
 }
 
 func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte, routingKey string, exchangeType string) error {
@@ -128,12 +139,12 @@ func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte,
 	defer func() {
 		if err == nil {
 			// return channel to pool
-			m.logger.Debug("[rbconsumer] Returning channel to pool")
+			m.logger.Debug("[rbpublisher] Returning channel to pool")
 			m.pubChannelPool.Return(ch)
 			return
 		}
 		// don't return error channel to pool, it will be automatically closed and recreated
-		m.logger.Debugf("[rbconsumer] Not returning channel to pool: error occured: %s", err.Error())
+		m.logger.Debugf("[rbpublisher] Not returning channel to pool: error occured: %s", err.Error())
 	}()
 
 	err = ch.ExchangeDeclare(
@@ -308,7 +319,7 @@ func (m *RabbitMqClient) connectToBroker() error {
 	backoff := time.Second
 	m.connMutex.Lock()
 	defer m.connMutex.Unlock()
-	for {
+	for !m.isClosed.Load() {
 		currentRcAttempt++
 
 		// Connecting
