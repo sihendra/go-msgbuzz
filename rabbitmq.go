@@ -111,13 +111,9 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(
 	if err != nil {
 		var amqpErr *amqp.Error
 		if ok := errors.As(err, &amqpErr); ok {
-			if amqpErr.Recover {
-				m.logger.Debugf("[rbpublisher] Error is recoverable: %v, retrying", amqpErr)
-				// Retryable
-				return m.publishMessageToExchange(topicName, body, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
-			}
-			m.logger.Warningf("[rbpublisher] Error is unrecoverable: %v", amqpErr)
-			return err
+			m.logger.Debugf("[rbpublisher] Amqp error: %v, retrying", amqpErr)
+			// Retryable
+			return m.publishMessageToExchange(topicName, body, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
 		}
 		m.logger.Errorf("[rbpublisher] Non amqp error: %v", err)
 		return err
