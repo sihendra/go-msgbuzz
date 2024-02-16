@@ -101,19 +101,19 @@ func NewRabbitMqClient(connStr string, opt ...RabbitOption) (*RabbitMqClient, er
 	return mc, nil
 }
 
-func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(*MessageBusOption)) error {
+func (m *RabbitMqClient) PublishWithContext(ctx context.Context, topicName string, body []byte, options ...func(*MessageBusOption)) error {
 	opt := &MessageBusOption{}
 	for _, o := range options {
 		o(opt)
 	}
 
-	err := m.publishMessageToExchange(topicName, body, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
+	err := m.publishMessageToExchange(ctx, topicName, body, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
 	if err != nil {
 		var amqpErr *amqp.Error
 		if ok := errors.As(err, &amqpErr); ok {
 			m.logger.Debugf("[rbpublisher] Amqp error: %v, retrying", amqpErr)
 			// Retryable
-			return m.publishMessageToExchange(topicName, body, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
+			return m.publishMessageToExchange(ctx, topicName, body, opt.RabbitMq.RoutingKey, opt.GetRabbitMqExchangeType())
 		}
 		m.logger.Errorf("[rbpublisher] Non amqp error: %v", err)
 		return err
@@ -122,10 +122,17 @@ func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(
 	return nil
 }
 
-func (m *RabbitMqClient) publishMessageToExchange(topicName string, body []byte, routingKey string, exchangeType string) error {
-	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Second)
+/*
+Publish will publish the body to the given topicName
+Deprecated: use PublishWithContext instead
+*/
+func (m *RabbitMqClient) Publish(topicName string, body []byte, options ...func(*MessageBusOption)) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	return m.PublishWithContext(ctx, topicName, body, options...)
+}
 
+func (m *RabbitMqClient) publishMessageToExchange(ctx context.Context, topicName string, body []byte, routingKey string, exchangeType string) error {
 	var err error
 
 	ch, err := m.pubChannelPool.Get(ctx) // Get a channel from the pool
